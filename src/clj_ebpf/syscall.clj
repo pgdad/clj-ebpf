@@ -159,6 +159,44 @@
     (.set mem C_POINTER 16 (:next-key attr))
     mem))
 
+(defrecord MapBatchAttr
+  [^int map-fd
+   ^MemorySegment in-batch      ;; For lookup_and_delete: input keys
+   ^MemorySegment out-batch     ;; For lookup: output keys after last processed
+   ^MemorySegment keys          ;; Keys array
+   ^MemorySegment values        ;; Values array
+   ^int count                   ;; Number of elements
+   ^long elem-flags])           ;; Flags for elements
+
+(defn map-batch-attr->segment
+  "Convert MapBatchAttr to MemorySegment for syscall
+
+  Layout (offsets for batch operations):
+  - map_fd: offset 0 (u32)
+  - batch union: offset 8 (u64)
+    - in_batch: pointer
+    - out_batch: pointer
+    - keys: pointer
+  - values: offset 16 (u64 pointer)
+  - count: offset 24 (u32)
+  - elem_flags: offset 32 (u64)"
+  [attr]
+  (let [mem (allocate-zeroed 128)]
+    (.set mem C_INT 0 (:map-fd attr))
+    ;; For batch operations, the union at offset 8 can be in_batch, out_batch, or keys
+    ;; We'll use in_batch/out_batch for lookup operations, keys for update/delete
+    (when (:in-batch attr)
+      (.set mem C_POINTER 8 (:in-batch attr)))
+    (when (:out-batch attr)
+      (.set mem C_POINTER 8 (:out-batch attr)))
+    (when (:keys attr)
+      (.set mem C_POINTER 8 (:keys attr)))
+    (when (:values attr)
+      (.set mem C_POINTER 16 (:values attr)))
+    (.set mem C_INT 24 (:count attr))
+    (.set mem C_LONG 32 (:elem-flags attr))
+    mem))
+
 (defrecord ProgLoadAttr
   [^int prog-type
    ^int insn-cnt
@@ -325,6 +363,79 @@
   (let [attr (->MapNextKeyAttr map-fd key-seg next-key-seg)
         mem (map-next-key-attr->segment attr)]
     (bpf-syscall :map-get-next-key mem)))
+
+;; Batch operations
+
+(defn map-lookup-batch
+  "Batch lookup elements in BPF map
+
+  Parameters:
+  - map-fd: Map file descriptor
+  - keys-seg: MemorySegment for keys array
+  - values-seg: MemorySegment for values array
+  - count: Number of elements to lookup
+  - elem-flags: Flags for elements (default 0)
+
+  Returns the number of elements successfully looked up.
+  The count field in the attr structure is updated with the actual count."
+  [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
+  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+        mem (map-batch-attr->segment attr)
+        result (bpf-syscall :map-lookup-batch mem)]
+    ;; Return the actual count of elements processed
+    ;; The kernel updates the count field at offset 24
+    (.get mem C_INT 24)))
+
+(defn map-lookup-and-delete-batch
+  "Batch lookup and delete elements in BPF map
+
+  Parameters:
+  - map-fd: Map file descriptor
+  - keys-seg: MemorySegment for keys array
+  - values-seg: MemorySegment for values array
+  - count: Number of elements to lookup and delete
+  - elem-flags: Flags for elements (default 0)
+
+  Returns the number of elements successfully processed.
+  Elements are deleted from the map after being read."
+  [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
+  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+        mem (map-batch-attr->segment attr)
+        result (bpf-syscall :map-lookup-and-delete-batch mem)]
+    (.get mem C_INT 24)))
+
+(defn map-update-batch
+  "Batch update elements in BPF map
+
+  Parameters:
+  - map-fd: Map file descriptor
+  - keys-seg: MemorySegment for keys array
+  - values-seg: MemorySegment for values array
+  - count: Number of elements to update
+  - elem-flags: Flags for elements (default 0, can be BPF_ANY, BPF_NOEXIST, BPF_EXIST)
+
+  Returns the number of elements successfully updated."
+  [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
+  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+        mem (map-batch-attr->segment attr)
+        result (bpf-syscall :map-update-batch mem)]
+    (.get mem C_INT 24)))
+
+(defn map-delete-batch
+  "Batch delete elements from BPF map
+
+  Parameters:
+  - map-fd: Map file descriptor
+  - keys-seg: MemorySegment for keys array
+  - count: Number of elements to delete
+  - elem-flags: Flags for elements (default 0)
+
+  Returns the number of elements successfully deleted."
+  [map-fd keys-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
+  (let [attr (->MapBatchAttr map-fd nil nil keys-seg nil count elem-flags)
+        mem (map-batch-attr->segment attr)
+        result (bpf-syscall :map-delete-batch mem)]
+    (.get mem C_INT 24)))
 
 (defn prog-load
   "Load a BPF program"

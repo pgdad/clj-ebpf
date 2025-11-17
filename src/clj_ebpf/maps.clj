@@ -218,6 +218,207 @@
   (doseq [k (map-keys bpf-map)]
     (map-delete bpf-map k)))
 
+;; Batch operations
+
+(defn map-lookup-batch
+  "Batch lookup multiple keys from map
+
+  Parameters:
+  - bpf-map: BpfMap instance
+  - keys: Sequence of keys to lookup
+
+  Returns a sequence of [key value] pairs for keys that exist.
+  Missing keys are omitted from the result."
+  [^BpfMap bpf-map keys]
+  (let [key-size (:key-size bpf-map)
+        value-size (:value-size bpf-map)
+        key-serializer (:key-serializer bpf-map)
+        value-deserializer (:value-deserializer bpf-map)
+        keys-vec (vec keys)
+        count (count keys-vec)
+
+        ;; Allocate arrays for keys and values
+        keys-array (utils/allocate-memory (* count key-size))
+        values-array (utils/allocate-memory (* count value-size))]
+
+    ;; Serialize keys into array
+    (doseq [[i k] (map-indexed vector keys-vec)]
+      (let [key-bytes (key-serializer k)
+            key-seg (if (instance? MemorySegment key-bytes)
+                      key-bytes
+                      (utils/bytes->segment key-bytes))
+            offset (* i key-size)]
+        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+
+    (try
+      ;; Perform batch lookup
+      (let [actual-count (syscall/map-lookup-batch (:fd bpf-map) keys-array values-array count)]
+        ;; Deserialize results
+        (for [i (range actual-count)]
+          (let [key (nth keys-vec i)
+                value-offset (* i value-size)
+                value-seg (.asSlice keys-array value-offset value-size)
+                value-bytes (utils/segment->bytes value-seg value-size)
+                value (value-deserializer value-bytes)]
+            [key value])))
+      (catch Exception e
+        ;; If batch operation not supported, fall back to individual lookups
+        (if (= :inval (:errno-keyword (ex-data e)))
+          (do
+            (log/warn "Batch lookup not supported, falling back to individual lookups")
+            (keep (fn [k]
+                    (when-let [v (map-lookup bpf-map k)]
+                      [k v]))
+                  keys))
+          (throw e))))))
+
+(defn map-update-batch
+  "Batch update multiple key-value pairs in map
+
+  Parameters:
+  - bpf-map: BpfMap instance
+  - entries: Sequence of [key value] pairs to update
+  - flags: Update flags (:any, :noexist, :exist), default :any
+
+  Returns the number of entries successfully updated."
+  [^BpfMap bpf-map entries & {:keys [flags] :or {flags :any}}]
+  (let [key-size (:key-size bpf-map)
+        value-size (:value-size bpf-map)
+        key-serializer (:key-serializer bpf-map)
+        value-serializer (:value-serializer bpf-map)
+        entries-vec (vec entries)
+        count (count entries-vec)
+        flag-bits (if (keyword? flags)
+                    (get const/map-update-flags flags 0)
+                    flags)
+
+        ;; Allocate arrays for keys and values
+        keys-array (utils/allocate-memory (* count key-size))
+        values-array (utils/allocate-memory (* count value-size))]
+
+    ;; Serialize keys and values into arrays
+    (doseq [[i [k v]] (map-indexed vector entries-vec)]
+      (let [key-bytes (key-serializer k)
+            value-bytes (value-serializer v)
+            key-seg (if (instance? MemorySegment key-bytes)
+                      key-bytes
+                      (utils/bytes->segment key-bytes))
+            value-seg (if (instance? MemorySegment value-bytes)
+                        value-bytes
+                        (utils/bytes->segment value-bytes))
+            key-offset (* i key-size)
+            value-offset (* i value-size)]
+        (MemorySegment/copy key-seg 0 keys-array key-offset key-size)
+        (MemorySegment/copy value-seg 0 values-array value-offset value-size)))
+
+    (try
+      ;; Perform batch update
+      (syscall/map-update-batch (:fd bpf-map) keys-array values-array count :elem-flags flag-bits)
+      (catch Exception e
+        ;; If batch operation not supported, fall back to individual updates
+        (if (= :inval (:errno-keyword (ex-data e)))
+          (do
+            (log/warn "Batch update not supported, falling back to individual updates")
+            (doseq [[k v] entries]
+              (map-update bpf-map k v :flags flags))
+            count)
+          (throw e))))))
+
+(defn map-delete-batch
+  "Batch delete multiple keys from map
+
+  Parameters:
+  - bpf-map: BpfMap instance
+  - keys: Sequence of keys to delete
+
+  Returns the number of keys successfully deleted."
+  [^BpfMap bpf-map keys]
+  (let [key-size (:key-size bpf-map)
+        key-serializer (:key-serializer bpf-map)
+        keys-vec (vec keys)
+        count (count keys-vec)
+
+        ;; Allocate array for keys
+        keys-array (utils/allocate-memory (* count key-size))]
+
+    ;; Serialize keys into array
+    (doseq [[i k] (map-indexed vector keys-vec)]
+      (let [key-bytes (key-serializer k)
+            key-seg (if (instance? MemorySegment key-bytes)
+                      key-bytes
+                      (utils/bytes->segment key-bytes))
+            offset (* i key-size)]
+        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+
+    (try
+      ;; Perform batch delete
+      (syscall/map-delete-batch (:fd bpf-map) keys-array count)
+      (catch Exception e
+        ;; If batch operation not supported, fall back to individual deletes
+        (if (= :inval (:errno-keyword (ex-data e)))
+          (do
+            (log/warn "Batch delete not supported, falling back to individual deletes")
+            (reduce (fn [cnt k]
+                      (if (map-delete bpf-map k)
+                        (inc cnt)
+                        cnt))
+                    0
+                    keys))
+          (throw e))))))
+
+(defn map-lookup-and-delete-batch
+  "Batch lookup and delete multiple keys from map atomically
+
+  Parameters:
+  - bpf-map: BpfMap instance
+  - keys: Sequence of keys to lookup and delete
+
+  Returns a sequence of [key value] pairs for keys that existed.
+  Keys are deleted from the map after being read."
+  [^BpfMap bpf-map keys]
+  (let [key-size (:key-size bpf-map)
+        value-size (:value-size bpf-map)
+        key-serializer (:key-serializer bpf-map)
+        value-deserializer (:value-deserializer bpf-map)
+        keys-vec (vec keys)
+        count (count keys-vec)
+
+        ;; Allocate arrays for keys and values
+        keys-array (utils/allocate-memory (* count key-size))
+        values-array (utils/allocate-memory (* count value-size))]
+
+    ;; Serialize keys into array
+    (doseq [[i k] (map-indexed vector keys-vec)]
+      (let [key-bytes (key-serializer k)
+            key-seg (if (instance? MemorySegment key-bytes)
+                      key-bytes
+                      (utils/bytes->segment key-bytes))
+            offset (* i key-size)]
+        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+
+    (try
+      ;; Perform batch lookup and delete
+      (let [actual-count (syscall/map-lookup-and-delete-batch (:fd bpf-map) keys-array values-array count)]
+        ;; Deserialize results
+        (for [i (range actual-count)]
+          (let [key (nth keys-vec i)
+                value-offset (* i value-size)
+                value-seg (.asSlice keys-array value-offset value-size)
+                value-bytes (utils/segment->bytes value-seg value-size)
+                value (value-deserializer value-bytes)]
+            [key value])))
+      (catch Exception e
+        ;; If batch operation not supported, fall back to individual operations
+        (if (= :inval (:errno-keyword (ex-data e)))
+          (do
+            (log/warn "Batch lookup-and-delete not supported, falling back to individual operations")
+            (keep (fn [k]
+                    (when-let [v (map-lookup bpf-map k)]
+                      (map-delete bpf-map k)
+                      [k v]))
+                  keys))
+          (throw e))))))
+
 ;; Map pinning
 
 (defn pin-map
