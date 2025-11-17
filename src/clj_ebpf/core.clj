@@ -12,6 +12,7 @@
             [clj-ebpf.perf :as perf]
             [clj-ebpf.lsm :as lsm]
             [clj-ebpf.btf :as btf]
+            [clj-ebpf.dsl :as dsl]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -169,6 +170,52 @@
 (def list-types btf/list-types)
 (def find-function btf/find-function)
 (def get-function-signature btf/get-function-signature)
+
+;; BPF DSL (Domain-Specific Language)
+;; Constants
+(def registers dsl/registers)
+(def xdp-action dsl/xdp-action)
+(def tc-action dsl/tc-action)
+(def bpf-helpers dsl/bpf-helpers)
+
+;; ALU operations
+(def mov dsl/mov)
+(def mov-reg dsl/mov-reg)
+(def add dsl/add)
+(def add-reg dsl/add-reg)
+(def sub dsl/sub)
+(def sub-reg dsl/sub-reg)
+(def mul dsl/mul)
+(def mul-reg dsl/mul-reg)
+(def and-op dsl/and-op)
+(def and-reg dsl/and-reg)
+(def or-op dsl/or-op)
+(def or-reg dsl/or-reg)
+(def xor-op dsl/xor-op)
+(def xor-reg dsl/xor-reg)
+(def lsh dsl/lsh)
+(def lsh-reg dsl/lsh-reg)
+(def rsh dsl/rsh)
+(def rsh-reg dsl/rsh-reg)
+(def arsh dsl/arsh)
+(def neg-reg dsl/neg-reg)
+
+;; Jump operations
+(def ja dsl/ja)
+(def jmp-imm dsl/jmp-imm)
+(def jmp-reg dsl/jmp-reg)
+(def call dsl/call)
+(def exit-insn dsl/exit-insn)
+
+;; Load/store operations
+(def ldx dsl/ldx)
+(def stx dsl/stx)
+(def st dsl/st)
+(def lddw dsl/lddw)
+
+;; Assembly
+(def assemble dsl/assemble)
+(def compile-program dsl/compile-program)
 
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)

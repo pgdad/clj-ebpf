@@ -71,7 +71,16 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Type resolution through typedef/const/volatile indirections
   - Function signature discovery
   - Foundation for CO-RE (Compile Once - Run Everywhere)
-- ✅ **220+ tests with comprehensive assertions - all passing**
+- ✅ **BPF DSL (Domain-Specific Language)**
+  - Idiomatic Clojure syntax for BPF programming
+  - Complete instruction set support (ALU, ALU64, JMP, JMP32, LD, LDX, ST, STX)
+  - 50+ instruction builder functions (mov, add, sub, jmp, ldx, stx, etc.)
+  - Register abstraction (r0-r10 with symbolic names)
+  - Helper function IDs (40+ helpers)
+  - XDP and TC action codes
+  - Compile DSL to BPF bytecode at runtime
+  - Rapid prototyping and dynamic code generation
+- ✅ **235+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -81,9 +90,9 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **Perf event buffers** (complete)
 - ✅ **LSM (Linux Security Modules) hooks** (complete)
 - ✅ **BTF (BPF Type Format) support** (complete)
+- ✅ **BPF assembly DSL** (complete)
 - ⏳ CO-RE (Compile Once - Run Everywhere)
 - ⏳ C compilation integration
-- ⏳ BPF assembly DSL
 
 ## Requirements
 
@@ -1038,6 +1047,199 @@ grep CONFIG_DEBUG_INFO_BTF /boot/config-$(uname -r)
 # View BTF information with bpftool (if available)
 bpftool btf dump file /sys/kernel/btf/vmlinux format c | head -n 50
 ```
+
+### BPF DSL (Domain-Specific Language)
+
+Write BPF programs using idiomatic Clojure syntax instead of raw bytecode:
+
+```clojure
+(require '[clj-ebpf.dsl :as dsl]
+         '[clj-ebpf.core :as bpf])
+
+;; Simple XDP program that passes all packets
+(def xdp-pass-program
+  (dsl/assemble [(dsl/mov :r0 (:pass dsl/xdp-action))
+                 (dsl/exit-insn)]))
+
+;; Load and attach the program
+(def prog-fd (bpf/load-program xdp-pass-program
+                              :prog-type :xdp
+                              :license "GPL"))
+(bpf/attach-xdp "eth0" prog-fd [:drv-mode])
+
+;; Example: XDP program that drops all packets
+(def xdp-drop-all
+  (dsl/assemble [(dsl/mov :r0 (:drop dsl/xdp-action))
+                 (dsl/exit-insn)]))
+
+;; Example: Arithmetic operations
+(def arithmetic-program
+  (dsl/assemble [;; r0 = 100
+                 (dsl/mov :r0 100)
+                 ;; r1 = 50
+                 (dsl/mov :r1 50)
+                 ;; r0 += r1 (r0 = 150)
+                 (dsl/add-reg :r0 :r1)
+                 ;; return r0
+                 (dsl/exit-insn)]))
+
+;; Example: Bitwise operations
+(def bitwise-program
+  (dsl/assemble [;; r0 = 0xFF
+                 (dsl/mov :r0 0xFF)
+                 ;; r0 &= 0x0F (mask lower 4 bits)
+                 (dsl/and-op :r0 0x0F)
+                 ;; r0 <<= 4 (shift left 4 bits)
+                 (dsl/lsh :r0 4)
+                 (dsl/exit-insn)]))
+
+;; Example: Load from memory
+(def load-store-program
+  (dsl/assemble [;; Load 8 bytes from r10-8 into r0
+                 (dsl/ldx :dw :r0 :r10 -8)
+                 ;; Increment r0
+                 (dsl/add :r0 1)
+                 ;; Store r0 back to r10-8
+                 (dsl/stx :dw :r10 :r0 -8)
+                 (dsl/exit-insn)]))
+
+;; Example: Conditional jump
+(def conditional-program
+  (dsl/assemble [;; r0 = 10
+                 (dsl/mov :r0 10)
+                 ;; if r0 == 10 jump forward 1 instruction
+                 (dsl/jmp-imm :jeq :r0 10 1)
+                 ;; This instruction is skipped
+                 (dsl/mov :r0 0)
+                 ;; return
+                 (dsl/exit-insn)]))
+
+;; Example: BPF helper function call
+(def helper-call-program
+  (dsl/assemble [;; Call ktime_get_ns() helper
+                 (dsl/call (:ktime-get-ns dsl/bpf-helpers))
+                 ;; Result is in r0, return it
+                 (dsl/exit-insn)]))
+
+;; Example: 64-bit immediate load (wide instruction)
+(def wide-immediate-program
+  (dsl/assemble [;; Load 64-bit value into r0
+                 (dsl/lddw :r0 0x123456789ABCDEF0)
+                 (dsl/exit-insn)]))
+
+;; Example: TC program that allows all packets
+(def tc-pass-program
+  (dsl/assemble [(dsl/mov :r0 (:ok dsl/tc-action))
+                 (dsl/exit-insn)]))
+
+;; Example: TC program that drops all packets
+(def tc-drop-program
+  (dsl/assemble [(dsl/mov :r0 (:shot dsl/tc-action))
+                 (dsl/exit-insn)]))
+```
+
+**Available Instructions:**
+
+**ALU Operations (64-bit):**
+- `(mov :r0 42)` - Move immediate to register
+- `(mov-reg :r0 :r1)` - Move register to register
+- `(add :r0 10)` - Add immediate
+- `(add-reg :r0 :r1)` - Add register
+- `(sub :r0 5)` - Subtract immediate
+- `(sub-reg :r0 :r1)` - Subtract register
+- `(mul :r0 2)` - Multiply by immediate
+- `(mul-reg :r0 :r1)` - Multiply by register
+- `(and-op :r0 0xFF)` - Bitwise AND
+- `(and-reg :r0 :r1)` - Bitwise AND with register
+- `(or-op :r0 0x10)` - Bitwise OR
+- `(or-reg :r0 :r1)` - Bitwise OR with register
+- `(xor-op :r0 0xFF)` - Bitwise XOR
+- `(xor-reg :r0 :r1)` - Bitwise XOR with register
+- `(lsh :r0 8)` - Left shift
+- `(lsh-reg :r0 :r1)` - Left shift by register
+- `(rsh :r0 8)` - Right shift (logical)
+- `(rsh-reg :r0 :r1)` - Right shift by register
+- `(arsh :r0 8)` - Arithmetic right shift
+- `(neg-reg :r0)` - Negate
+
+**Jump Operations:**
+- `(ja offset)` - Unconditional jump
+- `(jmp-imm :jeq :r0 0 offset)` - Jump if equal (immediate)
+- `(jmp-reg :jeq :r0 :r1 offset)` - Jump if equal (register)
+- `(jmp-imm :jgt :r0 100 offset)` - Jump if greater (unsigned)
+- `(jmp-imm :jge :r0 100 offset)` - Jump if greater or equal
+- `(jmp-imm :jlt :r0 100 offset)` - Jump if less than
+- `(jmp-imm :jle :r0 100 offset)` - Jump if less or equal
+- `(jmp-imm :jne :r0 0 offset)` - Jump if not equal
+- `(jmp-imm :jset :r0 0x10 offset)` - Jump if bitwise AND non-zero
+- `(call helper-id)` - Call BPF helper function
+- `(exit-insn)` - Exit program
+
+**Load/Store Operations:**
+- `(ldx :dw :r0 :r1 4)` - Load 8 bytes: r0 = *(u64*)(r1 + 4)
+- `(ldx :w :r0 :r1 0)` - Load 4 bytes: r0 = *(u32*)(r1 + 0)
+- `(ldx :h :r0 :r1 0)` - Load 2 bytes: r0 = *(u16*)(r1 + 0)
+- `(ldx :b :r0 :r1 0)` - Load 1 byte: r0 = *(u8*)(r1 + 0)
+- `(stx :dw :r1 :r0 4)` - Store 8 bytes: *(u64*)(r1 + 4) = r0
+- `(stx :w :r1 :r0 0)` - Store 4 bytes: *(u32*)(r1 + 0) = r0
+- `(st :dw :r1 4 42)` - Store immediate: *(u64*)(r1 + 4) = 42
+- `(lddw :r0 0x123...)` - Load 64-bit immediate (wide instruction)
+
+**Registers:**
+- `:r0` - Return value / exit code
+- `:r1` - `:r5` - Function arguments (scratch)
+- `:r6` - `:r9` - Callee-saved
+- `:r10` - Read-only frame pointer
+
+**Action Codes:**
+- XDP: `:aborted`, `:drop`, `:pass`, `:tx`, `:redirect`
+- TC: `:unspec`, `:ok`, `:reclassify`, `:shot`, `:pipe`, `:stolen`, `:queued`, `:repeat`, `:redirect`
+
+**BPF Helpers:**
+Access via `dsl/bpf-helpers`:
+- `:map-lookup-elem`, `:map-update-elem`, `:map-delete-elem`
+- `:ktime-get-ns`, `:trace-printk`
+- `:get-current-pid-tgid`, `:get-current-uid-gid`, `:get-current-comm`
+- `:perf-event-output`
+- And 40+ more helpers
+
+**Example - Complete XDP Packet Filter:**
+```clojure
+(require '[clj-ebpf.dsl :as dsl]
+         '[clj-ebpf.xdp :as xdp])
+
+;; XDP program that passes packets > 60 bytes, drops others
+(def xdp-size-filter
+  (dsl/assemble [;; r2 = ctx->data_end
+                 (dsl/ldx :w :r2 :r1 4)
+                 ;; r3 = ctx->data
+                 (dsl/ldx :w :r3 :r1 0)
+                 ;; r3 = data_end - data (packet size)
+                 (dsl/sub-reg :r2 :r3)
+                 ;; if size > 60 goto pass
+                 (dsl/jmp-imm :jgt :r2 60 1)
+                 ;; Drop (r0 = XDP_DROP)
+                 (dsl/mov :r0 (:drop dsl/xdp-action))
+                 (dsl/exit-insn)
+                 ;; Pass (r0 = XDP_PASS)
+                 (dsl/mov :r0 (:pass dsl/xdp-action))
+                 (dsl/exit-insn)]))
+
+;; Load and attach
+(def prog-fd (load-program xdp-size-filter
+                          :prog-type :xdp
+                          :license "GPL"))
+(xdp/attach-xdp "eth0" prog-fd [:drv-mode])
+```
+
+**Use Cases:**
+- **Rapid prototyping**: Write BPF programs interactively in REPL
+- **Dynamic program generation**: Generate BPF code at runtime
+- **Learning**: Understand BPF instructions with readable syntax
+- **Testing**: Create test programs easily
+- **Macro generation**: Build higher-level abstractions on top of DSL
+
+**Note:** The DSL generates raw BPF bytecode that must pass kernel verifier checks. Complex programs may need careful register management and bounds checking.
 
 ### ELF Object File Parsing
 
