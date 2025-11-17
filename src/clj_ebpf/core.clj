@@ -34,6 +34,9 @@
 (def create-hash-map maps/create-hash-map)
 (def create-array-map maps/create-array-map)
 (def create-lru-hash-map maps/create-lru-hash-map)
+(def create-percpu-hash-map maps/create-percpu-hash-map)
+(def create-percpu-array-map maps/create-percpu-array-map)
+(def create-lru-percpu-hash-map maps/create-lru-percpu-hash-map)
 (def create-stack-map maps/create-stack-map)
 (def create-queue-map maps/create-queue-map)
 (def create-lpm-trie-map maps/create-lpm-trie-map)
@@ -52,6 +55,12 @@
 (def map-update-batch maps/map-update-batch)
 (def map-delete-batch maps/map-delete-batch)
 (def map-lookup-and-delete-batch maps/map-lookup-and-delete-batch)
+
+;; Per-CPU aggregation helpers
+(def percpu-sum maps/percpu-sum)
+(def percpu-max maps/percpu-max)
+(def percpu-min maps/percpu-min)
+(def percpu-avg maps/percpu-avg)
 
 ;; Programs
 (def load-program programs/load-program)
@@ -74,6 +83,7 @@
 ;; Utils
 (def check-bpf-available utils/check-bpf-available)
 (def get-kernel-version utils/get-kernel-version)
+(def get-cpu-count utils/get-cpu-count)
 (def bpf-fs-mounted? utils/bpf-fs-mounted?)
 (def ensure-bpf-fs utils/ensure-bpf-fs)
 

@@ -97,6 +97,61 @@
     (.order bb ByteOrder/LITTLE_ENDIAN)
     (.getShort bb)))
 
+;; CPU detection
+
+(defn get-cpu-count
+  "Get the number of CPUs available on the system.
+
+  This is used for per-CPU map operations, where each CPU has its own
+  independent value for each key. Returns the number of available processors."
+  []
+  (.availableProcessors (Runtime/getRuntime)))
+
+;; Per-CPU serialization helpers
+
+(defn percpu-values->bytes
+  "Serialize a vector of per-CPU values into a flat byte array.
+
+  Parameters:
+  - values: Vector of values, one per CPU (or single value to replicate to all CPUs)
+  - value-serializer: Function to serialize each value to bytes
+  - value-size: Size of each value in bytes
+  - num-cpus: Number of CPUs (defaults to system CPU count)
+
+  Returns a byte array of size (value-size * num-cpus)"
+  [values value-serializer value-size & {:keys [num-cpus] :or {num-cpus (get-cpu-count)}}]
+  (let [values-vec (if (vector? values) values (vec (repeat num-cpus values)))
+        _ (when (not= (count values-vec) num-cpus)
+            (throw (ex-info "Per-CPU values vector size must match CPU count"
+                           {:expected num-cpus :got (count values-vec)})))
+        result (byte-array (* value-size num-cpus))]
+    (doseq [cpu (range num-cpus)]
+      (let [value-bytes (value-serializer (nth values-vec cpu))
+            offset (* cpu value-size)]
+        (System/arraycopy value-bytes 0 result offset value-size)))
+    result))
+
+(defn bytes->percpu-values
+  "Deserialize a flat byte array into a vector of per-CPU values.
+
+  Parameters:
+  - bytes: Byte array of size (value-size * num-cpus)
+  - value-deserializer: Function to deserialize bytes to value
+  - value-size: Size of each value in bytes
+  - num-cpus: Number of CPUs (defaults to system CPU count)
+
+  Returns a vector of values, one per CPU"
+  [^bytes bytes value-deserializer value-size & {:keys [num-cpus] :or {num-cpus (get-cpu-count)}}]
+  (let [expected-size (* value-size num-cpus)]
+    (when (not= (alength bytes) expected-size)
+      (throw (ex-info "Per-CPU byte array size mismatch"
+                     {:expected expected-size :got (alength bytes)})))
+    (vec (for [cpu (range num-cpus)]
+           (let [offset (* cpu value-size)
+                 value-bytes (byte-array value-size)]
+             (System/arraycopy bytes offset value-bytes 0 value-size)
+             (value-deserializer value-bytes))))))
+
 ;; MemorySegment helpers
 
 (defn int->segment

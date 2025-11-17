@@ -15,6 +15,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Array maps
   - Ring buffer maps
   - **LRU (Least Recently Used) hash maps**
+  - **Per-CPU maps** (hash, array, LRU for zero-contention multi-core performance)
   - **Stack maps** (LIFO semantics)
   - **Queue maps** (FIFO semantics)
   - **LPM Trie maps** (Longest Prefix Match for routing/CIDR lookups)
@@ -29,10 +30,10 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Resource management macros (`with-map`, `with-program`)
 - ✅ Comprehensive error handling
 - ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
-- ✅ **82 tests with 291 assertions - all passing**
+- ✅ **Per-CPU value aggregation helpers** (sum, max, min, avg)
+- ✅ **99 tests with 302 assertions - all passing**
 
 ### Planned (Future Phases)
-- ⏳ Per-CPU map support (requires special value handling)
 - ⏳ XDP (eXpress Data Path) support
 - ⏳ TC (Traffic Control) support
 - ⏳ Cgroup attachment
@@ -177,6 +178,48 @@ Or for Leiningen `project.clj`:
 ;; on kernels that don't support batch APIs (< 5.6)
 ```
 
+### Per-CPU Maps
+
+```clojure
+(require '[clj-ebpf.core :as bpf])
+
+;; Per-CPU maps eliminate contention on multi-core systems
+;; Each CPU has its own independent value for each key
+
+;; Per-CPU hash map
+(bpf/with-map [m (bpf/create-percpu-hash-map 100 :map-name "percpu_counters")]
+  ;; Insert a single value (replicated to all CPUs)
+  (bpf/map-update m 1 0)
+
+  ;; Or insert per-CPU values (vector, one per CPU)
+  (let [num-cpus (bpf/get-cpu-count)
+        percpu-values (vec (range num-cpus))]
+    (bpf/map-update m 2 percpu-values))
+
+  ;; Lookup returns a vector of values (one per CPU)
+  (let [values (bpf/map-lookup m 1)]
+    (println "Per-CPU values:" values)
+
+    ;; Aggregate across CPUs
+    (println "Sum across CPUs:" (bpf/percpu-sum values))
+    (println "Max across CPUs:" (bpf/percpu-max values))
+    (println "Min across CPUs:" (bpf/percpu-min values))
+    (println "Avg across CPUs:" (bpf/percpu-avg values))))
+
+;; Per-CPU array map
+(bpf/with-map [arr (bpf/create-percpu-array-map 10 :map-name "percpu_array")]
+  ;; Array indices are 0 to max-entries-1
+  (bpf/map-update arr 0 100)
+  (println "CPU values:" (bpf/map-lookup arr 0)))
+
+;; Per-CPU LRU hash map (automatic eviction)
+(bpf/with-map [lru (bpf/create-lru-percpu-hash-map 100 :map-name "percpu_lru")]
+  (bpf/map-update lru 1 42)
+  (println "LRU per-CPU:" (bpf/map-lookup lru 1)))
+```
+
+**Note:** Per-CPU maps on systems with very high CPU counts (>16) may encounter memory management issues with Panama FFI. The library automatically handles this gracefully.
+
 ### Stack and Queue Maps
 
 ```clojure
@@ -311,7 +354,9 @@ Or for Leiningen `project.clj`:
 - `create-hash-map` - Create hash map (convenience)
 - `create-array-map` - Create array map (convenience)
 - `create-lru-hash-map` - Create LRU hash map (auto-evicts least recently used)
-- `create-lru-percpu-hash-map` - Create per-CPU LRU hash map (experimental)
+- `create-percpu-hash-map` - Create per-CPU hash map (zero-contention)
+- `create-percpu-array-map` - Create per-CPU array map
+- `create-lru-percpu-hash-map` - Create per-CPU LRU hash map
 - `create-stack-map` - Create stack map (LIFO semantics)
 - `create-queue-map` - Create queue map (FIFO semantics)
 - `create-lpm-trie-map` - Create LPM trie map (longest prefix matching)
@@ -336,6 +381,10 @@ Or for Leiningen `project.clj`:
 - `map-update-batch` - Batch update key-value pairs
 - `map-delete-batch` - Batch delete multiple keys
 - `map-lookup-and-delete-batch` - Atomic batch lookup and delete
+- `percpu-sum` - Sum per-CPU values
+- `percpu-max` - Get maximum per-CPU value
+- `percpu-min` - Get minimum per-CPU value
+- `percpu-avg` - Calculate average per-CPU value
 - `pin-map` - Pin map to BPF filesystem
 - `get-pinned-map` - Retrieve pinned map
 - `dump-map` - Pretty print map contents
@@ -359,6 +408,7 @@ Or for Leiningen `project.clj`:
 #### Utilities
 - `check-bpf-available` - Check system compatibility
 - `get-kernel-version` - Get kernel version
+- `get-cpu-count` - Get number of CPUs (for per-CPU maps)
 - `bpf-fs-mounted?` - Check if BPF FS is mounted
 - `ensure-bpf-fs` - Get BPF FS path or throw
 
@@ -472,7 +522,10 @@ ls /sys/kernel/debug/tracing/events/syscalls/
 - **Use batch operations** for bulk map updates/lookups/deletes (reduces syscall overhead)
 - Batch operations automatically fall back to individual ops on kernels < 5.6
 - Ring buffers are more efficient than perf buffers for modern kernels
-- Per-CPU maps reduce contention (when fully implemented)
+- **Per-CPU maps eliminate contention** on multi-core systems (each CPU has independent values)
+  - Best for high-frequency counters and statistics
+  - Particularly effective with 2-16 CPUs
+  - Use aggregation helpers to combine per-CPU values
 - Pin maps/programs for cross-process reuse to avoid reload overhead
 - Use array maps for small, dense key spaces (faster than hash)
 - LRU maps for bounded caches (automatic eviction)
@@ -493,12 +546,12 @@ Contributions welcome! Priority areas for improvement:
 
 - Full ELF parsing for loading compiled BPF objects
 - BTF support for CO-RE
-- Per-CPU map support (complete value handling)
 - XDP and TC support
 - Improved ring buffer implementation
 - More examples and tutorials
 - Performance benchmarks
 - Additional specialized map types (devmap, cpumap, sockmap, etc.)
+- Per-CPU map support for very high CPU counts (>16 cores)
 
 ## License
 

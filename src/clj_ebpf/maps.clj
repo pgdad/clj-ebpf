@@ -12,14 +12,16 @@
   [fd               ; File descriptor
    type             ; Map type keyword
    key-size         ; Size of key in bytes
-   value-size       ; Size of value in bytes
+   value-size       ; Size of value in bytes (total size, including per-CPU if applicable)
    max-entries      ; Maximum number of entries
    flags            ; Map flags
    name             ; Map name (optional)
    key-serializer   ; Function to serialize key to bytes
    key-deserializer ; Function to deserialize bytes to key
    value-serializer ; Function to serialize value to bytes
-   value-deserializer]) ; Function to deserialize bytes to value
+   value-deserializer ; Function to deserialize bytes to value
+   percpu?          ; Whether this is a per-CPU map
+   percpu-value-size]) ; Size of value per CPU (if per-CPU map)
 
 (defn create-map
   "Create a new BPF map
@@ -38,12 +40,15 @@
   [{:keys [map-type key-size value-size max-entries map-flags map-name
            key-serializer key-deserializer value-serializer value-deserializer
            inner-map-fd numa-node map-ifindex btf-fd btf-key-type-id
-           btf-value-type-id btf-vmlinux-value-type-id map-extra]
+           btf-value-type-id btf-vmlinux-value-type-id map-extra
+           percpu? percpu-value-size]
     :or {map-flags 0
          key-serializer identity
          key-deserializer identity
          value-serializer identity
-         value-deserializer identity}}]
+         value-deserializer identity
+         percpu? false
+         percpu-value-size nil}}]
   (let [fd (syscall/map-create
              {:map-type map-type
               :key-size key-size
@@ -61,7 +66,8 @@
               :map-extra map-extra})]
     (log/info "Created BPF map:" map-name "type:" map-type "fd:" fd)
     (->BpfMap fd map-type key-size value-size max-entries map-flags map-name
-              key-serializer key-deserializer value-serializer value-deserializer)))
+              key-serializer key-deserializer value-serializer value-deserializer
+              percpu? percpu-value-size)))
 
 (defn close-map
   "Close a BPF map"
@@ -96,7 +102,8 @@
               value-deserializer identity}}]
   (->BpfMap fd map-type key-size value-size max-entries nil nil
             key-serializer key-deserializer
-            value-serializer value-deserializer))
+            value-serializer value-deserializer
+            false nil))  ; Not a per-CPU map by default
 
 ;; Map operations
 
@@ -617,6 +624,67 @@
                :value-serializer utils/int->bytes
                :value-deserializer utils/bytes->int}))
 
+(defn create-percpu-hash-map
+  "Create a per-CPU hash map with integer keys
+
+  Each CPU core has its own independent value for each key, eliminating
+  contention between CPUs. Lookups return a vector of values (one per CPU).
+
+  Parameters:
+  - max-entries: Maximum number of entries
+
+  Optional keyword arguments:
+  - :key-size - Size of key in bytes (default: 4)
+  - :value-size - Size of value in bytes per CPU (default: 4)
+  - :map-name - Name for the map
+
+  Note: The actual value size in the kernel is (value-size * num-cpus)"
+  [max-entries & {:keys [key-size value-size map-name]
+                  :or {key-size 4 value-size 4}}]
+  (let [num-cpus (utils/get-cpu-count)
+        actual-value-size (* value-size num-cpus)
+        per-cpu-val-size value-size  ; Capture in local var
+        cpus num-cpus]               ; Capture in local var
+    (create-map {:map-type :percpu-hash
+                 :key-size key-size
+                 :value-size actual-value-size
+                 :max-entries max-entries
+                 :map-name map-name
+                 :key-serializer utils/int->bytes
+                 :key-deserializer utils/bytes->int
+                 :value-serializer (fn [v] (utils/percpu-values->bytes v utils/int->bytes per-cpu-val-size :num-cpus cpus))
+                 :value-deserializer (fn [b] (utils/bytes->percpu-values b utils/bytes->int per-cpu-val-size :num-cpus cpus))
+                 :percpu? true
+                 :percpu-value-size value-size})))
+
+(defn create-percpu-array-map
+  "Create a per-CPU array map
+
+  Like array maps but each CPU has its own independent values. Array keys
+  are indices from 0 to (max-entries - 1). Lookups return vectors of values.
+
+  Parameters:
+  - max-entries: Number of array entries (keys are 0 to max-entries-1)
+
+  Optional keyword arguments:
+  - :value-size - Size of value in bytes per CPU (default: 4)
+  - :map-name - Name for the map"
+  [max-entries & {:keys [value-size map-name]
+                  :or {value-size 4}}]
+  (let [num-cpus (utils/get-cpu-count)
+        actual-value-size (* value-size num-cpus)]
+    (create-map {:map-type :percpu-array
+                 :key-size 4
+                 :value-size actual-value-size
+                 :max-entries max-entries
+                 :map-name map-name
+                 :key-serializer utils/int->bytes
+                 :key-deserializer utils/bytes->int
+                 :value-serializer (fn [v] (utils/percpu-values->bytes v utils/int->bytes value-size :num-cpus num-cpus))
+                 :value-deserializer (fn [b] (utils/bytes->percpu-values b utils/bytes->int value-size :num-cpus num-cpus))
+                 :percpu? true
+                 :percpu-value-size value-size})))
+
 (defn create-lru-percpu-hash-map
   "Create a per-CPU LRU hash map with integer keys and values
 
@@ -628,19 +696,65 @@
 
   Optional keyword arguments:
   - :key-size - Size of key in bytes (default: 4)
-  - :value-size - Size of value in bytes (default: 4)
+  - :value-size - Size of value in bytes per CPU (default: 4)
   - :map-name - Name for the map"
   [max-entries & {:keys [key-size value-size map-name]
                   :or {key-size 4 value-size 4}}]
-  (create-map {:map-type :lru-percpu-hash
-               :key-size key-size
-               :value-size value-size
-               :max-entries max-entries
-               :map-name map-name
-               :key-serializer utils/int->bytes
-               :key-deserializer utils/bytes->int
-               :value-serializer utils/int->bytes
-               :value-deserializer utils/bytes->int}))
+  (let [num-cpus (utils/get-cpu-count)
+        actual-value-size (* value-size num-cpus)]
+    (create-map {:map-type :lru-percpu-hash
+                 :key-size key-size
+                 :value-size actual-value-size
+                 :max-entries max-entries
+                 :map-name map-name
+                 :key-serializer utils/int->bytes
+                 :key-deserializer utils/bytes->int
+                 :value-serializer (fn [v] (utils/percpu-values->bytes v utils/int->bytes value-size :num-cpus num-cpus))
+                 :value-deserializer (fn [b] (utils/bytes->percpu-values b utils/bytes->int value-size :num-cpus num-cpus))
+                 :percpu? true
+                 :percpu-value-size value-size})))
+
+;; Per-CPU value aggregation helpers
+
+(defn percpu-sum
+  "Sum values across all CPUs.
+
+  Parameters:
+  - percpu-values: Vector of values, one per CPU
+
+  Returns the sum of all per-CPU values."
+  [percpu-values]
+  (reduce + percpu-values))
+
+(defn percpu-max
+  "Get maximum value across all CPUs.
+
+  Parameters:
+  - percpu-values: Vector of values, one per CPU
+
+  Returns the maximum value among all CPUs."
+  [percpu-values]
+  (apply max percpu-values))
+
+(defn percpu-min
+  "Get minimum value across all CPUs.
+
+  Parameters:
+  - percpu-values: Vector of values, one per CPU
+
+  Returns the minimum value among all CPUs."
+  [percpu-values]
+  (apply min percpu-values))
+
+(defn percpu-avg
+  "Calculate average value across all CPUs.
+
+  Parameters:
+  - percpu-values: Vector of values, one per CPU
+
+  Returns the average (mean) of all per-CPU values."
+  [percpu-values]
+  (/ (percpu-sum percpu-values) (count percpu-values)))
 
 (defn create-stack-map
   "Create a stack (LIFO) map
