@@ -11,6 +11,7 @@
             [clj-ebpf.cgroup :as cgroup]
             [clj-ebpf.perf :as perf]
             [clj-ebpf.lsm :as lsm]
+            [clj-ebpf.btf :as btf]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -153,6 +154,21 @@
 (def get-lsm-hook-name lsm/get-lsm-hook-name)
 (def list-hooks-by-category lsm/list-hooks-by-category)
 (def get-hook-category lsm/get-hook-category)
+
+;; BTF (BPF Type Format)
+(def load-btf-file btf/load-btf-file)
+(def btf-available? btf/btf-available?)
+(def get-type-by-id btf/get-type-by-id)
+(def get-type-name btf/get-type-name)
+(def find-type-by-name btf/find-type-by-name)
+(def get-struct-members btf/get-struct-members)
+(def get-enum-values btf/get-enum-values)
+(def get-func-params btf/get-func-params)
+(def resolve-type btf/resolve-type)
+(def get-type-size btf/get-type-size)
+(def list-types btf/list-types)
+(def find-function btf/find-function)
+(def get-function-signature btf/get-function-signature)
 
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)

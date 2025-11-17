@@ -64,7 +64,14 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Hook categorization and introspection utilities
   - High-level convenience functions and macros
   - Security policy enforcement at kernel level
-- ✅ **205+ tests with comprehensive assertions - all passing**
+- ✅ **BTF (BPF Type Format) support**
+  - Complete BTF file parsing (/sys/kernel/btf/vmlinux)
+  - All 19 BTF type kinds supported (INT, PTR, ARRAY, STRUCT, UNION, ENUM, FUNC, etc.)
+  - Type introspection (find types by name/ID, get struct members, enum values)
+  - Type resolution through typedef/const/volatile indirections
+  - Function signature discovery
+  - Foundation for CO-RE (Compile Once - Run Everywhere)
+- ✅ **220+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -73,7 +80,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **Cgroup attachment** (complete)
 - ✅ **Perf event buffers** (complete)
 - ✅ **LSM (Linux Security Modules) hooks** (complete)
-- ⏳ BTF (BPF Type Format) support
+- ✅ **BTF (BPF Type Format) support** (complete)
 - ⏳ CO-RE (Compile Once - Run Everywhere)
 - ⏳ C compilation integration
 - ⏳ BPF assembly DSL
@@ -861,6 +868,175 @@ cat /sys/kernel/security/lsm
 # Check kernel config
 grep CONFIG_BPF_LSM /boot/config-$(uname -r)
 # Should show CONFIG_BPF_LSM=y
+```
+
+### BTF (BPF Type Format)
+
+Parse and introspect kernel type information using BTF for type-aware BPF programs:
+
+```clojure
+(require '[clj-ebpf.btf :as btf])
+
+;; Check if BTF is available on the system
+(btf/btf-available?)
+;; => true (if kernel has BTF support)
+
+;; Load BTF data from kernel
+(def btf-data (btf/load-btf-file))
+;; Or from custom path:
+;; (def btf-data (btf/load-btf-file "/path/to/btf/file"))
+
+;; Explore loaded BTF data
+(println "Total types:" (count (:types btf-data)))
+;; => Total types: 15234
+
+(println "String table entries:" (count (:strings btf-data)))
+;; => String table entries: 8421
+
+;; Find a kernel struct by name
+(def task-struct (btf/find-type-by-name btf-data "task_struct"))
+(println "task_struct:" task-struct)
+;; => {:kind :struct :id 1234 :name-off 5678 :size 9024 :members [...]}
+
+;; Get struct members with names
+(def members (btf/get-struct-members btf-data task-struct))
+(doseq [member (take 5 members)]
+  (println "  " (:name member) "- type" (:type member) "offset" (:bit-offset member)))
+;; =>   state - type 42 offset 0
+;;      usage - type 128 offset 64
+;;      flags - type 31 offset 128
+;;      ...
+
+;; Get type size in bytes
+(btf/get-type-size btf-data (:id task-struct))
+;; => 9024
+
+;; List all types of a specific kind
+(def all-structs (btf/list-types btf-data :struct))
+(println "Number of structs:" (count all-structs))
+;; => Number of structs: 2341
+
+(def all-funcs (btf/list-types btf-data :func))
+(println "Number of functions:" (count all-funcs))
+;; => Number of functions: 15678
+
+;; Find and inspect a kernel function
+(def schedule-func (btf/find-function btf-data "schedule"))
+(println "Function:" (btf/get-type-name btf-data schedule-func))
+;; => Function: schedule
+
+;; Get function signature
+(def sig (btf/get-function-signature btf-data schedule-func))
+(println "Return type:" (:return-type sig))
+(println "Parameters:" (:params sig))
+;; => Return type: 0 (void)
+;;    Parameters: []
+
+;; Get enum values
+(def enums (btf/list-types btf-data :enum))
+(when (seq enums)
+  (let [enum-type (first enums)
+        values (btf/get-enum-values btf-data enum-type)]
+    (println "Enum:" (btf/get-type-name btf-data enum-type))
+    (doseq [v (take 3 values)]
+      (println "  " (:name v) "=" (:val v)))))
+
+;; Resolve types through typedef/const/volatile indirections
+(def typedef-id 500)
+(def resolved-id (btf/resolve-type btf-data typedef-id))
+(println "Typedef" typedef-id "resolves to" resolved-id)
+
+;; Get type by ID
+(def type-info (btf/get-type-by-id btf-data 42))
+(println "Type kind:" (:kind type-info))
+(println "Type name:" (btf/get-type-name btf-data type-info))
+```
+
+**BTF Type Kinds (19 total):**
+- **INT**: Integer types (signed, unsigned, char, bool)
+- **PTR**: Pointer types
+- **ARRAY**: Array types
+- **STRUCT**: Structure definitions
+- **UNION**: Union types
+- **ENUM**: 32-bit enumerations
+- **ENUM64**: 64-bit enumerations
+- **FWD**: Forward declarations
+- **TYPEDEF**: Type aliases
+- **VOLATILE**: Volatile qualifiers
+- **CONST**: Const qualifiers
+- **RESTRICT**: Restrict qualifiers
+- **FUNC**: Function definitions
+- **FUNC_PROTO**: Function prototypes
+- **VAR**: Variable declarations
+- **DATASEC**: Data sections
+- **FLOAT**: Floating-point types
+- **DECL_TAG**: Declaration tags
+- **TYPE_TAG**: Type tags
+
+**Use Cases:**
+- **Type-aware debugging**: Understand kernel data structures
+- **CO-RE (Compile Once - Run Everywhere)**: Portable BPF programs
+- **Struct layout introspection**: Field offsets and sizes
+- **Function signature discovery**: Parameter and return types
+- **Automatic code generation**: Generate bindings from BTF
+- **BPF verifier hints**: Provide type information for verification
+
+**Example - Inspect task_struct:**
+```clojure
+(def btf-data (btf/load-btf-file))
+
+;; Find task_struct
+(def task-struct (btf/find-type-by-name btf-data "task_struct"))
+(println "task_struct size:" (btf/get-type-size btf-data (:id task-struct)) "bytes")
+
+;; Get all members
+(def members (btf/get-struct-members btf-data task-struct))
+(println "task_struct has" (count members) "members")
+
+;; Find specific member
+(def state-member (first (filter #(= "state" (:name %)) members)))
+(println "state field:")
+(println "  Type ID:" (:type state-member))
+(println "  Bit offset:" (:bit-offset state-member))
+(println "  Byte offset:" (/ (:bit-offset state-member) 8))
+```
+
+**Example - Find all network-related structs:**
+```clojure
+(def btf-data (btf/load-btf-file))
+
+;; Find all structs with "sock" in the name
+(def sock-structs
+  (filter #(and (= :struct (:kind %))
+               (when-let [name (btf/get-type-name btf-data %)]
+                 (re-find #"sock" name)))
+          (:types btf-data)))
+
+(println "Found" (count sock-structs) "socket-related structs:")
+(doseq [s (take 10 sock-structs)]
+  (println "  -" (btf/get-type-name btf-data s)
+           "size:" (btf/get-type-size btf-data (:id s)) "bytes"))
+```
+
+**Important Notes:**
+- BTF requires kernel 4.18+ with `CONFIG_DEBUG_INFO_BTF=y`
+- BTF data is typically available at `/sys/kernel/btf/vmlinux`
+- File size is typically 5-10MB (compressed type information)
+- BTF enables CO-RE (Compile Once - Run Everywhere) for portable BPF programs
+- Use BTF to make your BPF programs kernel-version independent
+
+**Checking BTF Support:**
+```bash
+# Check if BTF is available
+ls -lh /sys/kernel/btf/vmlinux
+# Should show a file (typically 5-10MB)
+
+# Check kernel config
+grep CONFIG_DEBUG_INFO_BTF /boot/config-$(uname -r)
+# Should show CONFIG_DEBUG_INFO_BTF=y
+
+# View BTF information with bpftool (if available)
+bpftool btf dump file /sys/kernel/btf/vmlinux format c | head -n 50
 ```
 
 ### ELF Object File Parsing
