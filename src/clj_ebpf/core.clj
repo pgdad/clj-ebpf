@@ -9,6 +9,7 @@
             [clj-ebpf.xdp :as xdp]
             [clj-ebpf.tc :as tc]
             [clj-ebpf.cgroup :as cgroup]
+            [clj-ebpf.perf :as perf]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -129,6 +130,15 @@
 (def get-current-cgroup cgroup/get-current-cgroup)
 (def list-cgroup-children cgroup/list-cgroup-children)
 
+;; Perf Event Buffers
+(def perf-event-open perf/perf-event-open)
+(def create-perf-event-array perf/create-perf-event-array)
+(def create-perf-consumer perf/create-perf-consumer)
+(def start-perf-consumer perf/start-perf-consumer)
+(def stop-perf-consumer perf/stop-perf-consumer)
+(def get-perf-stats perf/get-perf-stats)
+(def read-perf-events perf/read-perf-events)
+
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)
 (def inspect-elf elf/inspect-elf)
@@ -180,6 +190,11 @@
   "Load and attach cgroup SKB program, ensure cleanup"
   [& args]
   `(cgroup/with-cgroup-skb ~@args))
+
+(defmacro with-perf-consumer
+  "Create and manage perf event consumer with automatic cleanup"
+  [& args]
+  `(perf/with-perf-consumer ~@args))
 
 ;; Initialization and system check
 

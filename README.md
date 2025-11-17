@@ -50,13 +50,21 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Container and process-level control
   - Cgroup FD management and utilities
   - High-level convenience functions and macros
-- ✅ **170+ tests with comprehensive assertions - all passing**
+- ✅ **Perf event buffers**
+  - Legacy event streaming mechanism (compatible with all kernels)
+  - Per-CPU perf event buffers with memory mapping
+  - perf_event_open syscall wrapper
+  - Event record parsing (PERF_RECORD_SAMPLE, PERF_RECORD_LOST)
+  - Polling-based event consumption with statistics
+  - Integration with BPF perf event array maps
+- ✅ **190+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
 - ✅ **ELF object file parsing** (load compiled BPF programs from .o files)
 - ✅ **TC (Traffic Control) support** (complete)
 - ✅ **Cgroup attachment** (complete)
+- ✅ **Perf event buffers** (complete)
 - ⏳ LSM (Linux Security Modules) hooks
 - ⏳ BTF (BPF Type Format) support
 - ⏳ CO-RE (Compile Once - Run Everywhere)
@@ -612,6 +620,82 @@ Efficient event reading from BPF ring buffers with memory mapping, epoll, and st
 - **Event pipelines** - Parser → Filter → Transform → Handler chains
 - **Real-time statistics** - Track throughput, errors, and performance
 - **Automatic resource management** - `with-ringbuf-consumer` macro ensures cleanup
+
+### Perf Event Buffers
+
+Alternative event streaming mechanism using Linux perf events (compatible with legacy BPF programs):
+
+```clojure
+(require '[clj-ebpf.perf :as perf]
+         '[clj-ebpf.core :as bpf])
+
+;; Create perf event array map (one entry per CPU)
+(def cpu-count (bpf/get-cpu-count))
+(def perf-map (perf/create-perf-event-array cpu-count
+                                            :map-name "perf_events"))
+
+;; Define event parser
+(def parse-event (bpf/make-event-parser [:u32 :u64 :u32]))
+
+;; Create perf event consumer
+(def consumer (perf/create-perf-consumer
+               :map perf-map
+               :callback (fn [event]
+                          (let [[pid ts data] (parse-event event)]
+                            (println "Event:" {:pid pid :ts ts :data data})))
+               :buffer-pages 64))  ; 64 pages per CPU (must be power of 2)
+
+;; Start consuming events
+(perf/start-perf-consumer consumer 100)  ; Poll every 100ms
+
+;; BPF program can now send events using bpf_perf_event_output helper
+;; (from BPF C code):
+;; bpf_perf_event_output(ctx, &perf_events, BPF_F_CURRENT_CPU, &data, sizeof(data));
+
+;; Check statistics
+(perf/get-perf-stats consumer)
+;; => {:events-read 1000
+;;     :events-processed 995
+;;     :polls 50
+;;     :errors 5
+;;     :uptime-ms 5000
+;;     :events-per-second 199.0}
+
+;; Stop consumer and cleanup
+(perf/stop-perf-consumer consumer)
+(bpf/close-map perf-map)
+
+;; Or use the convenience macro:
+(perf/with-perf-consumer [consumer {:map perf-map :callback println}]
+  (perf/start-perf-consumer consumer)
+  (Thread/sleep 5000)
+  (println "Stats:" (perf/get-perf-stats consumer)))
+;; Consumer automatically stopped and cleaned up
+```
+
+**Perf vs Ring Buffers:**
+- **Ring Buffers** (modern, kernel 5.8+):
+  - Zero-copy design
+  - Single producer, single consumer per CPU
+  - Memory mapped for efficiency
+  - Preferred for new programs
+
+- **Perf Event Buffers** (legacy, all kernels):
+  - Compatible with older kernels
+  - Widely used in existing BPF programs
+  - Per-CPU circular buffers
+  - Poll-based event consumption
+  - Use for compatibility with legacy code
+
+**Key Features:**
+- Per-CPU perf event buffers
+- Memory-mapped buffer access
+- Event record parsing (PERF_RECORD_SAMPLE, PERF_RECORD_LOST)
+- Polling-based event consumption
+- Real-time statistics tracking
+- Automatic buffer management
+
+**Note:** Perf event operations require `CAP_PERFMON` or `CAP_SYS_ADMIN` capability.
 
 ### ELF Object File Parsing
 
