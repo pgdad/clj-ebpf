@@ -57,7 +57,14 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Event record parsing (PERF_RECORD_SAMPLE, PERF_RECORD_LOST)
   - Polling-based event consumption with statistics
   - Integration with BPF perf event array maps
-- ✅ **190+ tests with comprehensive assertions - all passing**
+- ✅ **LSM (Linux Security Modules) hooks**
+  - BPF program attachment to LSM hook points
+  - 30+ LSM hooks across categories (file-system, process, network, credentials, mount)
+  - BPF_LINK_CREATE for LSM attachment
+  - Hook categorization and introspection utilities
+  - High-level convenience functions and macros
+  - Security policy enforcement at kernel level
+- ✅ **205+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -65,12 +72,11 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **TC (Traffic Control) support** (complete)
 - ✅ **Cgroup attachment** (complete)
 - ✅ **Perf event buffers** (complete)
-- ⏳ LSM (Linux Security Modules) hooks
+- ✅ **LSM (Linux Security Modules) hooks** (complete)
 - ⏳ BTF (BPF Type Format) support
 - ⏳ CO-RE (Compile Once - Run Everywhere)
 - ⏳ C compilation integration
 - ⏳ BPF assembly DSL
-- ⏳ Perf event buffers
 
 ## Requirements
 
@@ -696,6 +702,166 @@ Alternative event streaming mechanism using Linux perf events (compatible with l
 - Automatic buffer management
 
 **Note:** Perf event operations require `CAP_PERFMON` or `CAP_SYS_ADMIN` capability.
+
+### LSM (Linux Security Modules) Hooks
+
+Implement security policies by attaching BPF programs to LSM hook points in the Linux kernel:
+
+```clojure
+(require '[clj-ebpf.lsm :as lsm]
+         '[clj-ebpf.core :as bpf])
+
+;; Check if LSM BPF is available on the system
+(lsm/lsm-available?)
+;; => true (if kernel 5.7+ with LSM BPF enabled)
+
+;; List all available LSM hook points
+(lsm/list-lsm-hooks)
+;; => [:file-open :file-permission :bprm-check-security :socket-create ...]
+
+;; List hooks by category
+(lsm/list-hooks-by-category :file-system)
+;; => [:file-open :file-permission :inode-create :inode-unlink ...]
+
+(lsm/list-hooks-by-category :network)
+;; => [:socket-create :socket-bind :socket-connect :socket-listen ...]
+
+;; Get category for a specific hook
+(lsm/get-hook-category :file-open)
+;; => :file-system
+
+;; Simple LSM program that allows all operations
+;; Returns 0 (allow)
+(def lsm-bytecode
+  (byte-array [0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00  ; mov r0, 0 (allow)
+               0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])) ; exit
+
+;; Load LSM program for file_open hook
+(def prog-fd (lsm/load-lsm-program lsm-bytecode :file-open
+                                   :prog-name "file_open_monitor"
+                                   :license "GPL"))
+
+;; Attach LSM program to hook point
+(def link-info (lsm/attach-lsm-program prog-fd))
+;; => {:prog-fd 5 :link-fd 6}
+
+;; LSM program is now active, monitoring file open operations
+
+;; Later, detach the program
+(lsm/detach-lsm-program link-info)
+(bpf/close-program {:fd prog-fd})
+
+;; Or use the convenience macro for automatic cleanup:
+(lsm/with-lsm-program [info (lsm/attach-lsm-program prog-fd)]
+  ;; LSM program is active
+  (println "LSM program attached")
+  ;; Do work...
+  (Thread/sleep 5000))
+;; Program automatically detached when leaving scope
+
+;; High-level convenience function (load + attach):
+(def setup (lsm/setup-lsm-hook lsm-bytecode :file-open
+                              :prog-name "file_monitor"))
+;; => {:prog-fd 5 :link-fd 6 :hook :file-open}
+
+;; Monitor file operations for 10 seconds
+(Thread/sleep 10000)
+
+;; Cleanup
+(lsm/teardown-lsm-hook setup)
+
+;; Or use with-lsm-hook macro:
+(lsm/with-lsm-hook [setup (lsm/setup-lsm-hook bytecode :socket-create
+                                              :prog-name "socket_monitor")]
+  ;; LSM hook is active
+  (println "Monitoring socket creation")
+  (Thread/sleep 10000))
+;; Automatically detached and cleaned up
+```
+
+**LSM Hook Categories:**
+
+- **File System** (`:file-system`):
+  - `:file-open`, `:file-permission`, `:file-ioctl`, `:file-lock`
+  - `:inode-create`, `:inode-link`, `:inode-unlink`, `:inode-mkdir`
+  - `:inode-rename`, `:inode-permission`, `:inode-setattr`
+
+- **Process** (`:process`):
+  - `:bprm-check-security` - Program execution security check
+  - `:task-kill` - Signal sending control
+  - `:task-setpgid`, `:task-getpgid` - Process group operations
+  - `:task-alloc`, `:task-free` - Task lifecycle
+
+- **Network** (`:network`):
+  - `:socket-create`, `:socket-bind`, `:socket-connect`
+  - `:socket-listen`, `:socket-accept`
+  - `:socket-sendmsg`, `:socket-recvmsg`
+
+- **Credentials** (`:credentials`):
+  - `:cred-prepare` - Credential preparation
+
+- **Mount** (`:mount`):
+  - `:sb-mount`, `:sb-umount`, `:sb-pivotroot`
+
+**LSM Return Codes:**
+```clojure
+;; From your BPF program, return:
+0   ; Allow the operation (lsm/lsm-return-code :allow)
+-1  ; Deny the operation (lsm/lsm-return-code :deny) - returns EPERM
+```
+
+**Use Cases:**
+- **Security monitoring**: Audit file access, socket operations
+- **Access control**: Block unauthorized file/network operations
+- **Compliance**: Enforce security policies at kernel level
+- **Container security**: Monitor/restrict container operations
+- **Threat detection**: Real-time detection of suspicious behavior
+- **Policy enforcement**: MAC (Mandatory Access Control) policies
+
+**Example - File Access Monitor:**
+```clojure
+;; BPF program that logs all file open attempts (in C):
+;; SEC("lsm/file_open")
+;; int BPF_PROG(file_open_monitor, struct file *file)
+;; {
+;;     // Log file path, process info
+;;     bpf_printk("File opened: %s\n", file->f_path.dentry->d_name.name);
+;;     return 0; // Allow
+;; }
+
+;; Load and attach from Clojure:
+(def file-monitor (lsm/setup-lsm-hook compiled-bytecode :file-open
+                                     :prog-name "file_access_audit"))
+;; Now monitoring all file opens system-wide
+```
+
+**Example - Socket Creation Control:**
+```clojure
+;; Deny socket creation for specific protocols
+;; (compile with clang -target bpf -O2 -c)
+(def socket-filter (lsm/setup-lsm-hook bytecode :socket-create
+                                      :prog-name "socket_policy"))
+;; Enforce socket creation policy
+```
+
+**Important Notes:**
+- Requires kernel 5.7+ with LSM BPF enabled (`CONFIG_BPF_LSM=y`)
+- Requires `CAP_BPF` and `CAP_SYS_ADMIN` capabilities
+- LSM programs run on every security check - keep them efficient
+- Use BPF_LINK_CREATE for attachment (automatic with this library)
+- Programs must return 0 (allow) or negative errno (deny)
+- Test thoroughly - incorrect LSM programs can break system operations
+
+**Checking LSM BPF Support:**
+```bash
+# Check if LSM BPF is enabled
+cat /sys/kernel/security/lsm
+# Should include "bpf" in the list
+
+# Check kernel config
+grep CONFIG_BPF_LSM /boot/config-$(uname -r)
+# Should show CONFIG_BPF_LSM=y
+```
 
 ### ELF Object File Parsing
 

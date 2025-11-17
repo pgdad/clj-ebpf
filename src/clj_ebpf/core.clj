@@ -10,6 +10,7 @@
             [clj-ebpf.tc :as tc]
             [clj-ebpf.cgroup :as cgroup]
             [clj-ebpf.perf :as perf]
+            [clj-ebpf.lsm :as lsm]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -139,6 +140,20 @@
 (def get-perf-stats perf/get-perf-stats)
 (def read-perf-events perf/read-perf-events)
 
+;; LSM (Linux Security Modules) Hooks
+(def load-lsm-program lsm/load-lsm-program)
+(def create-lsm-link lsm/create-lsm-link)
+(def close-lsm-link lsm/close-lsm-link)
+(def attach-lsm-program lsm/attach-lsm-program)
+(def detach-lsm-program lsm/detach-lsm-program)
+(def setup-lsm-hook lsm/setup-lsm-hook)
+(def teardown-lsm-hook lsm/teardown-lsm-hook)
+(def lsm-available? lsm/lsm-available?)
+(def list-lsm-hooks lsm/list-lsm-hooks)
+(def get-lsm-hook-name lsm/get-lsm-hook-name)
+(def list-hooks-by-category lsm/list-hooks-by-category)
+(def get-hook-category lsm/get-hook-category)
+
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)
 (def inspect-elf elf/inspect-elf)
@@ -195,6 +210,16 @@
   "Create and manage perf event consumer with automatic cleanup"
   [& args]
   `(perf/with-perf-consumer ~@args))
+
+(defmacro with-lsm-program
+  "Attach LSM program and ensure detachment after use"
+  [& args]
+  `(lsm/with-lsm-program ~@args))
+
+(defmacro with-lsm-hook
+  "Load and attach LSM hook, ensure cleanup"
+  [& args]
+  `(lsm/with-lsm-hook ~@args))
 
 ;; Initialization and system check
 
