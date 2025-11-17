@@ -14,19 +14,21 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Hash maps
   - Array maps
   - Ring buffer maps
+  - **LRU (Least Recently Used) hash maps**
 - ✅ BPF program loading
 - ✅ Kprobe/Kretprobe attachment
 - ✅ Tracepoint attachment
-- ✅ Raw tracepoint attachment
+- ✅ Raw tracepoint attachment (fully working alternative to kprobes)
 - ✅ Ring buffer event reading (basic)
-- ✅ Map pinning to BPF filesystem
+- ✅ Map pinning to BPF filesystem (with data persistence)
 - ✅ Program pinning
 - ✅ Idiomatic Clojure APIs
 - ✅ Resource management macros (`with-map`, `with-program`)
 - ✅ Comprehensive error handling
+- ✅ **54 tests with 179 assertions - all passing**
 
 ### Planned (Future Phases)
-- ⏳ All remaining map types (LRU, per-CPU, etc.)
+- ⏳ Per-CPU map support (requires special value handling)
 - ⏳ XDP (eXpress Data Path) support
 - ⏳ TC (Traffic Control) support
 - ⏳ Cgroup attachment
@@ -140,6 +142,7 @@ Or for Leiningen `project.clj`:
 ;; Convenience constructors
 (def hash-map (bpf/create-hash-map 100 :map-name "my_hash"))
 (def array-map (bpf/create-array-map 50 :map-name "my_array"))
+(def lru-map (bpf/create-lru-hash-map 100 :map-name "my_lru")) ; Auto-evicts LRU entries
 ```
 
 ### Loading and Attaching Programs
@@ -219,8 +222,11 @@ Or for Leiningen `project.clj`:
 - `create-map` - Create a BPF map with options
 - `create-hash-map` - Create hash map (convenience)
 - `create-array-map` - Create array map (convenience)
+- `create-lru-hash-map` - Create LRU hash map (auto-evicts least recently used)
+- `create-lru-percpu-hash-map` - Create per-CPU LRU hash map (experimental)
 - `create-ringbuf-map` - Create ring buffer map (convenience)
 - `close-map` - Close map and release resources
+- `map-from-fd` - Create map from existing file descriptor (for pinned maps)
 - `map-lookup` - Look up value by key
 - `map-update` - Insert or update key-value pair
 - `map-delete` - Delete entry by key
@@ -378,15 +384,16 @@ ls /sys/kernel/debug/tracing/events/syscalls/
 
 ## Contributing
 
-Contributions welcome! Areas for improvement:
+Contributions welcome! Priority areas for improvement:
 
 - Full ELF parsing for loading compiled BPF objects
 - BTF support for CO-RE
-- More map types (LRU, per-CPU, etc.)
+- Per-CPU map support (complete value handling)
+- Batch map operations
 - XDP and TC support
 - Improved ring buffer implementation
-- More examples
-- Better documentation
+- More examples and tutorials
+- Performance benchmarks
 
 ## License
 
