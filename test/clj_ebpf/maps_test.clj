@@ -211,11 +211,14 @@
                           :key-size 4
                           :value-size 4
                           :max-entries 10
-                          :map-name "test_macro"}]
+                          :map-name "test_macro"
+                          :key-serializer utils/int->bytes
+                          :key-deserializer utils/bytes->int
+                          :value-serializer utils/int->bytes
+                          :value-deserializer utils/bytes->int}]
           (reset! fd-atom (:fd m))
           (is (pos? (:fd m)))
-          (maps/map-update m 1 100 :key-serializer utils/int->bytes
-                                    :value-serializer utils/int->bytes))
+          (maps/map-update m 1 100))
         ;; Map should be closed after exiting the block
         ;; Attempting to use the FD should fail
         (is (some? @fd-atom))))))

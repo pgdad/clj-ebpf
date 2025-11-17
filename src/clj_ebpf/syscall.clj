@@ -47,8 +47,10 @@
   "Get the last errno value"
   []
   (if errno-location
-    (let [errno-ptr (.invokeWithArguments ^java.lang.invoke.MethodHandle errno-location [])]
-      (.get ^MemorySegment errno-ptr C_INT 0))
+    (let [errno-ptr (.invokeWithArguments ^java.lang.invoke.MethodHandle errno-location [])
+          ;; Reinterpret the zero-sized segment to have size of int
+          errno-seg (.reinterpret ^MemorySegment errno-ptr 4)]
+      (.get errno-seg C_INT 0))
     0))
 
 (defn errno->keyword
