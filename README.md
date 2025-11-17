@@ -38,12 +38,18 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
 - ✅ **Per-CPU value aggregation helpers** (sum, max, min, avg)
 - ✅ **ELF object file parsing** (extract programs and maps from compiled .o files)
-- ✅ **129 tests with 245 assertions - all passing**
+- ✅ **TC (Traffic Control) support**
+  - Clsact qdisc management
+  - TC filter attachment (ingress/egress)
+  - TC program loading (:sched-cls, :sched-act)
+  - Priority-based filter management
+  - Automatic resource cleanup with macros
+- ✅ **150+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
 - ✅ **ELF object file parsing** (load compiled BPF programs from .o files)
-- ⏳ TC (Traffic Control) support
+- ✅ **TC (Traffic Control) support** (complete)
 - ⏳ Cgroup attachment
 - ⏳ LSM (Linux Security Modules) hooks
 - ⏳ BTF (BPF Type Format) support
@@ -334,6 +340,87 @@ XDP provides high-performance packet processing at the network interface driver 
 - `XDP_REDIRECT` (4) - Redirect to different interface
 
 **Note:** XDP attachment requires `CAP_NET_ADMIN` capability. Generic XDP (`:skb-mode`) works on all network interfaces, while native XDP (`:drv-mode`) requires driver support.
+
+### TC (Traffic Control)
+
+TC provides flexible packet filtering and traffic shaping at the Linux kernel level, with both ingress and egress attachment points:
+
+```clojure
+(require '[clj-ebpf.tc :as tc]
+         '[clj-ebpf.programs :as programs])
+
+;; Simple TC program that passes all packets
+;; Returns TC_ACT_OK (0)
+(def tc-bytecode
+  (byte-array [0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00  ; mov r0, 0 (TC_ACT_OK)
+               0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])) ; exit
+
+;; Load TC program
+(def prog-fd (tc/load-tc-program tc-bytecode :sched-cls
+                                 :prog-name "tc_filter"
+                                 :license "GPL"))
+
+;; Add clsact qdisc to interface (required once per interface)
+(tc/add-clsact-qdisc "eth0")
+
+;; Attach filter to ingress (incoming packets)
+(def ingress-info (tc/attach-tc-filter "eth0" prog-fd :ingress
+                                       :prog-name "ingress_filter"
+                                       :priority 1))
+;; => {:ifindex 2 :direction :ingress :priority 1}
+
+;; Attach filter to egress (outgoing packets)
+(def egress-info (tc/attach-tc-filter "eth0" prog-fd :egress
+                                      :prog-name "egress_filter"
+                                      :priority 1))
+
+;; Later, detach filters
+(tc/detach-tc-filter (:ifindex ingress-info) (:direction ingress-info) (:priority ingress-info))
+(tc/detach-tc-filter (:ifindex egress-info) (:direction egress-info) (:priority egress-info))
+
+;; Remove clsact qdisc (removes all filters)
+(tc/remove-clsact-qdisc "eth0")
+(syscall/close-fd prog-fd)
+
+;; Or use the convenience macro for automatic cleanup:
+(tc/with-tc-filter [info (tc/attach-tc-filter "eth0" prog-fd :ingress)]
+  ;; TC filter is active on interface
+  (println "TC filter attached to interface" (:ifindex info))
+  ;; Do packet processing...
+  )
+;; Filter automatically detached when leaving scope
+
+;; High-level convenience functions:
+(def setup (tc/setup-tc-ingress "eth0" tc-bytecode
+                                :prog-name "my_ingress"
+                                :priority 1))
+;; => {:prog-fd 5 :filter-info {:ifindex 2 :direction :ingress :priority 1}}
+
+;; Process packets...
+(Thread/sleep 5000)
+
+;; Cleanup
+(tc/teardown-tc-filter setup)
+```
+
+**TC Action Codes:**
+- `TC_ACT_UNSPEC` (-1) - Continue with next rule
+- `TC_ACT_OK` (0) - Pass packet
+- `TC_ACT_RECLASSIFY` (1) - Reclassify packet
+- `TC_ACT_SHOT` (2) - Drop packet
+- `TC_ACT_PIPE` (3) - Continue with next action
+- `TC_ACT_STOLEN` (4) - Consume packet
+- `TC_ACT_QUEUED` (5) - Packet queued
+- `TC_ACT_REPEAT` (6) - Repeat action
+- `TC_ACT_REDIRECT` (7) - Redirect packet
+
+**TC vs XDP:**
+- **XDP**: Runs at driver level, highest performance, ingress only
+- **TC**: Runs after driver, more flexible, supports both ingress and egress
+- **Use XDP** for: High-speed packet filtering, DDoS mitigation
+- **Use TC** for: More complex filtering, packet modification, QoS, egress filtering
+
+**Note:** TC attachment requires `CAP_NET_ADMIN` capability. The `clsact` qdisc must be added before attaching filters, but `attach-tc-filter` does this automatically by default.
 
 ### Enhanced Ring Buffer Event Processing
 

@@ -7,6 +7,7 @@
             [clj-ebpf.programs :as programs]
             [clj-ebpf.events :as events]
             [clj-ebpf.xdp :as xdp]
+            [clj-ebpf.tc :as tc]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -99,6 +100,17 @@
 (def detach-xdp xdp/detach-xdp)
 (def load-xdp-program xdp/load-xdp-program)
 
+;; TC (Traffic Control)
+(def tc-action tc/tc-action)
+(def add-clsact-qdisc tc/add-clsact-qdisc)
+(def remove-clsact-qdisc tc/remove-clsact-qdisc)
+(def attach-tc-filter tc/attach-tc-filter)
+(def detach-tc-filter tc/detach-tc-filter)
+(def load-tc-program tc/load-tc-program)
+(def setup-tc-ingress tc/setup-tc-ingress)
+(def setup-tc-egress tc/setup-tc-egress)
+(def teardown-tc-filter tc/teardown-tc-filter)
+
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)
 (def inspect-elf elf/inspect-elf)
@@ -130,6 +142,16 @@
   "Attach XDP program to interface and ensure detachment after use"
   [& args]
   `(xdp/with-xdp ~@args))
+
+(defmacro with-tc-filter
+  "Attach TC filter and ensure detachment after use"
+  [& args]
+  `(tc/with-tc-filter ~@args))
+
+(defmacro with-tc-program
+  "Load TC program, attach filter, and ensure cleanup"
+  [& args]
+  `(tc/with-tc-program ~@args))
 
 ;; Initialization and system check
 
