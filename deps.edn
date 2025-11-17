@@ -1,8 +1,10 @@
+;; Requires Java 21+ for Panama Foreign Function & Memory API
 {:paths ["src" "resources"]
 
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
-        net.java.dev.jna/jna {:mvn/version "5.14.0"}
         org.clojure/tools.logging {:mvn/version "1.3.0"}}
+
+ ;; Note: No external dependencies! Uses Java 21+ Panama FFI
 
  :aliases
  {:dev {:extra-paths ["dev" "test"]

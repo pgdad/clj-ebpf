@@ -4,12 +4,12 @@ Complete eBPF (Extended Berkeley Packet Filter) programming library for Clojure 
 
 ## Overview
 
-clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting with eBPF programs and maps. It uses direct syscall interface via JNA for minimal external dependencies and maximum control.
+clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting with eBPF programs and maps. It uses direct syscall interface via Java's Panama Foreign Function & Memory API (FFI) for zero external dependencies and maximum control.
 
 ## Features
 
 ### Current (MVP)
-- ✅ Direct `bpf()` syscall interface using JNA
+- ✅ Direct `bpf()` syscall interface using Panama FFI (Java 21+)
 - ✅ BPF map operations (create, lookup, update, delete, iterate)
   - Hash maps
   - Array maps
@@ -49,8 +49,8 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 
 ### Dependencies
 - **Clojure**: 1.12.0+
-- **JNA**: 5.14.0 (only external dependency!)
-- **Java**: 11+ (Java 21+ recommended for Panama FFI option)
+- **Java**: 21+ (required for Panama FFI)
+- **Zero external dependencies!** Uses Java's built-in Panama FFI
 
 ### Mounting Required Filesystems
 
@@ -291,7 +291,7 @@ sudo clj -M:test
 
 clj-ebpf uses a layered architecture:
 
-1. **Syscall Layer** (`clj-ebpf.syscall`) - Direct JNA wrappers around `bpf()` syscall
+1. **Syscall Layer** (`clj-ebpf.syscall`) - Direct Panama FFI wrappers around `bpf()` syscall
 2. **Utils Layer** (`clj-ebpf.utils`) - Memory management, serialization, system utilities
 3. **Domain Layer** - High-level abstractions:
    - `clj-ebpf.maps` - Map operations
@@ -301,8 +301,8 @@ clj-ebpf uses a layered architecture:
 
 ### Why Direct Syscalls?
 
-We use direct `bpf()` syscalls via JNA instead of wrapping libbpf because:
-- **Minimal dependencies**: Only JNA required
+We use direct `bpf()` syscalls via Panama FFI instead of wrapping libbpf because:
+- **Zero dependencies**: Uses Java's built-in Panama FFI (Java 21+)
 - **Full control**: Access to all BPF features
 - **No C compilation**: Pure Clojure + Java interop
 - **Better errors**: Direct access to kernel errors and verifier logs

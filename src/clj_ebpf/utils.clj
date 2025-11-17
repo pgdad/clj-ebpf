@@ -1,37 +1,44 @@
 (ns clj-ebpf.utils
-  "Utility functions for BPF programming"
+  "Utility functions for BPF programming using Panama FFI"
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import [com.sun.jna Memory Pointer]
+  (:import [java.lang.foreign Arena MemorySegment ValueLayout]
            [java.nio ByteBuffer ByteOrder]))
+
+;; Arena for memory allocation (auto-managed by GC)
+(def ^:private ^:dynamic *arena* (Arena/ofAuto))
+
+;; Value layouts
+(def ^:private C_INT ValueLayout/JAVA_INT)
+(def ^:private C_LONG ValueLayout/JAVA_LONG)
+(def ^:private C_SHORT ValueLayout/JAVA_SHORT)
+(def ^:private C_BYTE ValueLayout/JAVA_BYTE)
 
 ;; Memory allocation and management
 
 (defn allocate-memory
   "Allocate native memory of given size"
   [size]
-  (Memory. (long size)))
+  (.allocate *arena* (long size) 8))
 
-(defn pointer->bytes
-  "Read bytes from a pointer"
-  [^Pointer ptr size]
-  (when (and ptr (not= ptr Pointer/NULL))
-    (let [bytes (byte-array size)]
-      (.read ptr 0 bytes 0 size)
-      bytes)))
+(defn segment->bytes
+  "Read bytes from a memory segment"
+  [^MemorySegment seg size]
+  (when (and seg (not= seg MemorySegment/NULL))
+    (.toArray seg C_BYTE 0 size)))
 
-(defn bytes->pointer
-  "Write bytes to a newly allocated pointer"
+(defn bytes->segment
+  "Write bytes to a newly allocated memory segment"
   [^bytes bytes]
   (when bytes
-    (let [ptr (allocate-memory (count bytes))]
-      (.write ptr 0 bytes 0 (count bytes))
-      ptr)))
+    (let [seg (.allocate *arena* (long (count bytes)) 1)]
+      (.copyFrom seg 0 (MemorySegment/ofArray bytes) 0 (count bytes))
+      seg)))
 
 (defn zero-memory
-  "Zero out memory at pointer"
-  [^Pointer ptr size]
-  (.clear ptr size))
+  "Zero out memory segment"
+  [^MemorySegment seg size]
+  (.fill seg 0 size (byte 0)))
 
 ;; Endianness utilities
 
@@ -87,51 +94,66 @@
     (.order bb ByteOrder/LITTLE_ENDIAN)
     (.getShort bb)))
 
-;; Pointer helpers
+;; MemorySegment helpers
 
-(defn int->pointer
-  "Convert integer to pointer"
+(defn int->segment
+  "Convert integer to memory segment"
   [^long n]
-  (let [ptr (allocate-memory 4)]
-    (.setInt ptr 0 (int n))
-    ptr))
+  (let [seg (.allocate *arena* C_INT)]
+    (.set seg C_INT 0 (int n))
+    seg))
 
-(defn pointer->int
-  "Read integer from pointer"
-  [^Pointer ptr]
-  (when (and ptr (not= ptr Pointer/NULL))
-    (.getInt ptr 0)))
+(defn segment->int
+  "Read integer from memory segment"
+  [^MemorySegment seg]
+  (when (and seg (not= seg MemorySegment/NULL))
+    (.get seg C_INT 0)))
 
-(defn long->pointer
-  "Convert long to pointer"
+(defn long->segment
+  "Convert long to memory segment"
   [^long n]
-  (let [ptr (allocate-memory 8)]
-    (.setLong ptr 0 n)
-    ptr))
+  (let [seg (.allocate *arena* C_LONG)]
+    (.set seg C_LONG 0 n)
+    seg))
 
-(defn pointer->long
-  "Read long from pointer"
-  [^Pointer ptr]
-  (when (and ptr (not= ptr Pointer/NULL))
-    (.getLong ptr 0)))
+(defn segment->long
+  "Read long from memory segment"
+  [^MemorySegment seg]
+  (when (and seg (not= seg MemorySegment/NULL))
+    (.get seg C_LONG 0)))
+
+;; Compatibility aliases for code that used pointer names
+(def pointer->bytes segment->bytes)
+(def bytes->pointer bytes->segment)
+(def pointer->int segment->int)
+(def int->pointer int->segment)
+(def pointer->long segment->long)
+(def long->pointer long->segment)
 
 ;; String utilities
 
-(defn string->pointer
-  "Convert string to null-terminated pointer"
+(defn string->segment
+  "Convert string to null-terminated memory segment"
   [^String s]
   (when s
     (let [bytes (.getBytes s "UTF-8")
-          ptr (allocate-memory (inc (count bytes)))]
-      (.write ptr 0 bytes 0 (count bytes))
-      (.setByte ptr (count bytes) 0)
-      ptr)))
+          seg (.allocate *arena* (inc (count bytes)) 1)]
+      (.copyFrom seg 0 (MemorySegment/ofArray bytes) 0 (count bytes))
+      (.set seg C_BYTE (count bytes) (byte 0))
+      seg)))
 
-(defn pointer->string
-  "Read null-terminated string from pointer"
-  [^Pointer ptr max-len]
-  (when (and ptr (not= ptr Pointer/NULL))
-    (.getString ptr 0 "UTF-8")))
+(defn segment->string
+  "Read null-terminated string from memory segment"
+  [^MemorySegment seg max-len]
+  (when (and seg (not= seg MemorySegment/NULL))
+    (let [bytes (.toArray seg C_BYTE 0 max-len)
+          null-idx (or (first (keep-indexed #(when (zero? %2) %1) bytes))
+                      max-len)]
+      (String. bytes 0 null-idx "UTF-8"))))
+
+;; Compatibility alias
+(def pointer->string segment->string)
+(def string->pointer string->segment)
 
 ;; File system utilities
 
@@ -234,8 +256,8 @@
 (defn hex-dump
   "Create hex dump of bytes"
   [bytes & {:keys [offset limit] :or {offset 0 limit 256}}]
-  (let [bytes (if (instance? Pointer bytes)
-                (pointer->bytes bytes limit)
+  (let [bytes (if (instance? MemorySegment bytes)
+                (segment->bytes bytes limit)
                 bytes)
         end (min (count bytes) (+ offset limit))]
     (str/join "\n"
@@ -257,7 +279,7 @@
      (try
        ~@body
        (finally
-         ;; Memory is automatically GC'd by JNA
+         ;; Memory is automatically GC'd by Arena
          nil))))
 
 (defmacro with-fd
@@ -315,3 +337,14 @@
              :u64 (.getLong bb)
              :i64 (.getLong bb)))
          spec)))
+
+;; Arena management
+(defn with-arena
+  "Execute function with a confined arena for memory allocations"
+  [f]
+  (let [arena (Arena/ofConfined)]
+    (try
+      (binding [*arena* arena]
+        (f))
+      (finally
+        (.close arena)))))

@@ -4,7 +4,7 @@
             [clj-ebpf.constants :as const]
             [clj-ebpf.utils :as utils]
             [clojure.tools.logging :as log])
-  (:import [com.sun.jna Pointer]))
+  (:import [java.lang.foreign MemorySegment]))
 
 ;; Map lifecycle management
 
@@ -72,46 +72,46 @@
 
 ;; Map operations
 
-(defn- key->pointer
-  "Convert key to pointer using map's serializer"
+(defn- key->segment
+  "Convert key to memory segment using map's serializer"
   [^BpfMap bpf-map key]
   (let [serializer (:key-serializer bpf-map)
         key-bytes (serializer key)]
-    (if (instance? Pointer key-bytes)
+    (if (instance? MemorySegment key-bytes)
       key-bytes
-      (utils/bytes->pointer key-bytes))))
+      (utils/bytes->segment key-bytes))))
 
-(defn- value->pointer
-  "Convert value to pointer using map's serializer"
+(defn- value->segment
+  "Convert value to memory segment using map's serializer"
   [^BpfMap bpf-map value]
   (let [serializer (:value-serializer bpf-map)
         value-bytes (serializer value)]
-    (if (instance? Pointer value-bytes)
+    (if (instance? MemorySegment value-bytes)
       value-bytes
-      (utils/bytes->pointer value-bytes))))
+      (utils/bytes->segment value-bytes))))
 
-(defn- pointer->key
-  "Convert pointer to key using map's deserializer"
-  [^BpfMap bpf-map ^Pointer ptr]
+(defn- segment->key
+  "Convert memory segment to key using map's deserializer"
+  [^BpfMap bpf-map ^MemorySegment seg]
   (let [deserializer (:key-deserializer bpf-map)
-        key-bytes (utils/pointer->bytes ptr (:key-size bpf-map))]
+        key-bytes (utils/segment->bytes seg (:key-size bpf-map))]
     (deserializer key-bytes)))
 
-(defn- pointer->value
-  "Convert pointer to value using map's deserializer"
-  [^BpfMap bpf-map ^Pointer ptr]
+(defn- segment->value
+  "Convert memory segment to value using map's deserializer"
+  [^BpfMap bpf-map ^MemorySegment seg]
   (let [deserializer (:value-deserializer bpf-map)
-        value-bytes (utils/pointer->bytes ptr (:value-size bpf-map))]
+        value-bytes (utils/segment->bytes seg (:value-size bpf-map))]
     (deserializer value-bytes)))
 
 (defn map-lookup
   "Lookup value by key in map"
   [^BpfMap bpf-map key]
-  (let [key-ptr (key->pointer bpf-map key)
-        value-ptr (utils/allocate-memory (:value-size bpf-map))]
+  (let [key-seg (key->segment bpf-map key)
+        value-seg (utils/allocate-memory (:value-size bpf-map))]
     (try
-      (syscall/map-lookup-elem (:fd bpf-map) key-ptr value-ptr)
-      (pointer->value bpf-map value-ptr)
+      (syscall/map-lookup-elem (:fd bpf-map) key-seg value-seg)
+      (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
         (if (= :noent (:errno-keyword (ex-data e)))
           nil ; Key not found
@@ -125,20 +125,20 @@
   - :noexist - Create new element, fail if exists
   - :exist - Update existing element, fail if not exists"
   [^BpfMap bpf-map key value & {:keys [flags] :or {flags :any}}]
-  (let [key-ptr (key->pointer bpf-map key)
-        value-ptr (value->pointer bpf-map value)
+  (let [key-seg (key->segment bpf-map key)
+        value-seg (value->segment bpf-map value)
         flag-bits (if (keyword? flags)
                     (get const/map-update-flags flags 0)
                     flags)]
-    (syscall/map-update-elem (:fd bpf-map) key-ptr value-ptr flag-bits)
+    (syscall/map-update-elem (:fd bpf-map) key-seg value-seg flag-bits)
     nil))
 
 (defn map-delete
   "Delete entry by key from map"
   [^BpfMap bpf-map key]
-  (let [key-ptr (key->pointer bpf-map key)]
+  (let [key-seg (key->segment bpf-map key)]
     (try
-      (syscall/map-delete-elem (:fd bpf-map) key-ptr)
+      (syscall/map-delete-elem (:fd bpf-map) key-seg)
       true
       (catch clojure.lang.ExceptionInfo e
         (if (= :noent (:errno-keyword (ex-data e)))
@@ -149,11 +149,11 @@
   "Get next key in map (for iteration)
   Pass nil as key to get first key"
   [^BpfMap bpf-map key]
-  (let [key-ptr (if key (key->pointer bpf-map key) Pointer/NULL)
-        next-key-ptr (utils/allocate-memory (:key-size bpf-map))]
+  (let [key-seg (if key (key->segment bpf-map key) MemorySegment/NULL)
+        next-key-seg (utils/allocate-memory (:key-size bpf-map))]
     (try
-      (syscall/map-get-next-key (:fd bpf-map) key-ptr next-key-ptr)
-      (pointer->key bpf-map next-key-ptr)
+      (syscall/map-get-next-key (:fd bpf-map) key-seg next-key-seg)
+      (segment->key bpf-map next-key-seg)
       (catch clojure.lang.ExceptionInfo e
         (if (= :noent (:errno-keyword (ex-data e)))
           nil ; No more keys

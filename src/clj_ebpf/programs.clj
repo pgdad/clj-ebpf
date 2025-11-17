@@ -6,7 +6,7 @@
             [clojure.tools.logging :as log]
             [clojure.string :as str]
             [clojure.java.io :as io])
-  (:import [com.sun.jna Pointer Memory]))
+  (:import [java.lang.foreign MemorySegment]))
 
 ;; BPF Program representation
 
@@ -45,26 +45,26 @@
          license "GPL"
          kern-version (utils/get-kernel-version)
          prog-flags 0}}]
-  (let [;; Convert insns to pointer if needed
-        insns-ptr (if (instance? Pointer insns)
+  (let [;; Convert insns to memory segment if needed
+        insns-seg (if (instance? MemorySegment insns)
                    insns
-                   (utils/bytes->pointer insns))
+                   (utils/bytes->segment insns))
         ;; Calculate instruction count (each BPF insn is 8 bytes)
         insn-cnt (or insn-count
-                    (if (instance? Pointer insns)
-                      (throw (ex-info "Must provide :insn-count when :insns is a Pointer"
+                    (if (instance? MemorySegment insns)
+                      (throw (ex-info "Must provide :insn-count when :insns is a MemorySegment"
                                      {:insns insns}))
                       (/ (count insns) 8)))
         ;; Allocate log buffer
-        log-buf (Memory. const/BPF_LOG_BUF_SIZE)
-        _ (.clear log-buf)
+        log-buf (utils/allocate-memory const/BPF_LOG_BUF_SIZE)
+        _ (utils/zero-memory log-buf const/BPF_LOG_BUF_SIZE)
 
         ;; Load the program
         fd (try
              (syscall/prog-load
                {:prog-type prog-type
                 :insn-cnt insn-cnt
-                :insns insns-ptr
+                :insns insns-seg
                 :license license
                 :log-level log-level
                 :log-size const/BPF_LOG_BUF_SIZE
@@ -77,13 +77,13 @@
                 :prog-btf-fd prog-btf-fd})
              (catch clojure.lang.ExceptionInfo e
                ;; Extract verifier log
-               (let [log-str (.getString log-buf 0 "UTF-8")]
+               (let [log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)]
                  (log/error "BPF program load failed. Verifier log:\n" log-str)
                  (throw (ex-info "BPF program load failed"
                                 (assoc (ex-data e) :verifier-log log-str))))))
 
         ;; Get verifier log even on success
-        log-str (.getString log-buf 0 "UTF-8")
+        log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)
         log-str (when (and log-str (not (str/blank? log-str)))
                   (str/trim log-str))]
 

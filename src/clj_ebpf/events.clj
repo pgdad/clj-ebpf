@@ -5,7 +5,7 @@
             [clj-ebpf.utils :as utils]
             [clj-ebpf.maps :as maps]
             [clojure.tools.logging :as log])
-  (:import [com.sun.jna Pointer Memory Native]
+  (:import [java.lang.foreign MemorySegment]
            [java.nio ByteBuffer ByteOrder MappedByteBuffer]
            [java.nio.channels FileChannel]
            [java.nio.file Paths StandardOpenOption]

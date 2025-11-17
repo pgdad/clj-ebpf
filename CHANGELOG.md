@@ -5,12 +5,29 @@ All notable changes to clj-ebpf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed - Migrated to Panama FFI
+- **BREAKING**: Migrated from JNA to Java's Panama Foreign Function & Memory API
+- Requires Java 21+ (previously Java 11+)
+- **Zero external dependencies** - removed JNA dependency entirely
+- Uses MemorySegment instead of JNA Pointer/Memory
+- More efficient native memory management with automatic cleanup
+- Better performance through direct foreign function access
+
+### Benefits
+- No external dependencies - uses only Java standard library
+- Better integration with modern Java features
+- Improved memory safety with scoped allocations
+- More efficient native calls through method handles
+- Future-proof: Panama FFI is the official Java native interface going forward
+
 ## [0.1.0-SNAPSHOT] - 2024-01-XX
 
 ### Added - Initial MVP Release
 
 #### Core Infrastructure
-- Direct `bpf()` syscall interface using JNA
+- Direct `bpf()` syscall interface using Panama FFI (Java 21+)
 - Complete BPF constants and enumerations from `linux/bpf.h`
 - Memory management utilities for native interactions
 - Kernel version detection and compatibility checking
@@ -67,8 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 - Clojure 1.12.0
-- JNA 5.14.0 (only external dependency)
 - tools.logging 1.3.0
+- Java 21+ (for Panama FFI)
+- **Zero external dependencies!**
 
 ### System Requirements
 - Linux kernel 4.14+ (5.8+ recommended)
