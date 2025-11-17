@@ -25,7 +25,8 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Idiomatic Clojure APIs
 - ✅ Resource management macros (`with-map`, `with-program`)
 - ✅ Comprehensive error handling
-- ✅ **54 tests with 179 assertions - all passing**
+- ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
+- ✅ **63 tests with 227 assertions - all passing**
 
 ### Planned (Future Phases)
 - ⏳ Per-CPU map support (requires special value handling)
@@ -145,6 +146,35 @@ Or for Leiningen `project.clj`:
 (def lru-map (bpf/create-lru-hash-map 100 :map-name "my_lru")) ; Auto-evicts LRU entries
 ```
 
+### Batch Operations
+
+```clojure
+(require '[clj-ebpf.core :as bpf])
+
+(bpf/with-map [m (bpf/create-hash-map 1000 :map-name "batch_demo")]
+  ;; Batch update - more efficient than individual updates
+  (let [entries (for [i (range 100)] [i (* i 2)])]
+    (bpf/map-update-batch m entries))
+
+  ;; Batch lookup - retrieve multiple keys at once
+  (let [keys (range 10 20)
+        results (bpf/map-lookup-batch m keys)]
+    (doseq [[k v] results]
+      (println k "=>" v)))
+
+  ;; Batch delete - remove multiple keys efficiently
+  (bpf/map-delete-batch m (range 50 60))
+
+  ;; Batch lookup and delete - atomic operation
+  (let [keys (range 0 10)
+        results (bpf/map-lookup-and-delete-batch m keys)]
+    ;; Returns values and deletes keys in one operation
+    (println "Deleted:" (count results) "entries")))
+
+;; Note: Batch operations automatically fall back to individual operations
+;; on kernels that don't support batch APIs (< 5.6)
+```
+
 ### Loading and Attaching Programs
 
 ```clojure
@@ -235,6 +265,10 @@ Or for Leiningen `project.clj`:
 - `map-values` - Get all values (lazy seq)
 - `map-count` - Count entries
 - `map-clear` - Delete all entries
+- `map-lookup-batch` - Batch lookup multiple keys
+- `map-update-batch` - Batch update key-value pairs
+- `map-delete-batch` - Batch delete multiple keys
+- `map-lookup-and-delete-batch` - Atomic batch lookup and delete
 - `pin-map` - Pin map to BPF filesystem
 - `get-pinned-map` - Retrieve pinned map
 - `dump-map` - Pretty print map contents
@@ -368,11 +402,13 @@ ls /sys/kernel/debug/tracing/events/syscalls/
 
 ## Performance Considerations
 
-- Use batch operations when available (future feature)
+- **Use batch operations** for bulk map updates/lookups/deletes (reduces syscall overhead)
+- Batch operations automatically fall back to individual ops on kernels < 5.6
 - Ring buffers are more efficient than perf buffers for modern kernels
-- Per-CPU maps reduce contention
-- Pin maps/programs for cross-process reuse
+- Per-CPU maps reduce contention (when fully implemented)
+- Pin maps/programs for cross-process reuse to avoid reload overhead
 - Use array maps for small, dense key spaces (faster than hash)
+- LRU maps for bounded caches (automatic eviction)
 
 ## Security Considerations
 
@@ -389,11 +425,11 @@ Contributions welcome! Priority areas for improvement:
 - Full ELF parsing for loading compiled BPF objects
 - BTF support for CO-RE
 - Per-CPU map support (complete value handling)
-- Batch map operations
 - XDP and TC support
 - Improved ring buffer implementation
 - More examples and tutorials
 - Performance benchmarks
+- Additional map types (stack, queue, LPM trie)
 
 ## License
 
