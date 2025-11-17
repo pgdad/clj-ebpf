@@ -1,8 +1,9 @@
 (ns clj-ebpf.constants
   "BPF constants and enumerations from linux/bpf.h")
 
-;; BPF syscall number (x86_64)
+;; Syscall numbers (x86_64)
 (def ^:const BPF_SYSCALL_NR 321)
+(def ^:const PERF_EVENT_OPEN_SYSCALL_NR 298)
 
 ;; BPF commands
 (def bpf-cmd
@@ -173,7 +174,9 @@
    :sk-skb-verdict 38
    :sk-reuseport-select 39
    :sk-reuseport-select-or-migrate 40
-   :perf-event 41})
+   :perf-event 41
+   :trace-kprobe-multi 42
+   :trace-kprobe-session 43})
 
 (def attach-type->int
   (into {} (map (fn [[k v]] [k v]) attach-type)))
@@ -323,16 +326,17 @@
    :intr 4          ; Interrupted system call
    :io 5            ; I/O error
    :badf 9          ; Bad file descriptor
+   :again 11        ; Try again / Resource temporarily unavailable
    :nomem 12        ; Out of memory
    :acces 13        ; Permission denied
    :fault 14        ; Bad address
+   :busy 16         ; Device or resource busy
    :exist 17        ; File exists
    :nodev 19        ; No such device
    :inval 22        ; Invalid argument
    :nospc 28        ; No space left on device
    :range 34        ; Math result not representable
    :nosys 38        ; Function not implemented
-   :busy 16         ; Device or resource busy
    :notsup 95})     ; Operation not supported
 
 ;; Maximum sizes

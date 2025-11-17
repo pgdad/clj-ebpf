@@ -110,23 +110,6 @@
 
 ;; Kprobe/Kretprobe attachment
 
-(defn- write-kprobe-event
-  "Write kprobe event to tracefs"
-  [event-name function-name is-retprobe?]
-  (let [tracefs-path "/sys/kernel/debug/tracing"
-        kprobe-events-path (str tracefs-path "/kprobe_events")
-        event-def (str (if is-retprobe? "r:" "p:")
-                      event-name " " function-name "\n")]
-    (try
-      (spit kprobe-events-path event-def :append true)
-      (log/debug "Created kprobe event:" event-def)
-      (catch Exception e
-        (throw (ex-info "Failed to create kprobe event"
-                       {:event-name event-name
-                        :function-name function-name
-                        :is-retprobe is-retprobe?
-                        :cause e}))))))
-
 (defn- remove-kprobe-event
   "Remove kprobe event from tracefs"
   [event-name]
@@ -137,6 +120,28 @@
       (log/debug "Removed kprobe event:" event-name)
       (catch Exception e
         (log/warn "Failed to remove kprobe event" event-name ":" e)))))
+
+(defn- write-kprobe-event
+  "Write kprobe event to tracefs"
+  [event-name function-name is-retprobe?]
+  (let [tracefs-path "/sys/kernel/debug/tracing"
+        kprobe-events-path (str tracefs-path "/kprobe_events")
+        event-def (str (if is-retprobe? "r:" "p:")
+                      event-name " " function-name "\n")]
+    ;; First try to remove the event if it exists (ignore errors)
+    (try
+      (remove-kprobe-event event-name)
+      (catch Exception _ nil))
+    ;; Now create the event
+    (try
+      (spit kprobe-events-path event-def :append true)
+      (log/debug "Created kprobe event:" event-def)
+      (catch Exception e
+        (throw (ex-info "Failed to create kprobe event"
+                       {:event-name event-name
+                        :function-name function-name
+                        :is-retprobe is-retprobe?
+                        :cause e}))))))
 
 (defn- get-tracepoint-id
   "Get tracepoint ID from tracefs"
@@ -152,51 +157,31 @@
                         :cause e}))))))
 
 (defn attach-kprobe
-  "Attach BPF program to a kprobe
+  "Attach BPF program to a kprobe using modern BPF_LINK_CREATE
 
   Options:
   - :function - Kernel function name to probe
-  - :retprobe? - If true, attach to function return (default: false)
-  - :pid - PID to attach to (default: -1 for all processes)
-  - :cpu - CPU to attach to (default: -1 for all CPUs)"
-  [^BpfProgram prog {:keys [function retprobe? pid cpu]
-                     :or {retprobe? false pid -1 cpu -1}}]
-  (let [event-name (str "clj_ebpf_" (name (gensym "kprobe_")))
-        _ (write-kprobe-event event-name function retprobe?)
-        tracepoint-id (get-tracepoint-id "kprobes" event-name)
-
-        ;; Open perf event
-        event-fd (syscall/perf-event-open
-                   (const/perf-type :tracepoint)
-                   tracepoint-id
-                   pid
-                   cpu
-                   -1  ; group_fd
-                   0)  ; flags
-
-        ;; Attach BPF program to perf event
-        _ (syscall/ioctl event-fd (const/perf-event-ioc :set-bpf) (:fd prog))
-
-        ;; Enable the event
-        _ (syscall/ioctl event-fd (const/perf-event-ioc :enable))
+  - :retprobe? - If true, attach to function return (default: false)"
+  [^BpfProgram prog {:keys [function retprobe?]
+                     :or {retprobe? false}}]
+  (let [;; Use modern BPF_LINK_CREATE with kprobe_multi (kernel 5.5+)
+        link-fd (syscall/bpf-link-create-kprobe (:fd prog) function retprobe?)
 
         ;; Create detach function
         detach-fn (fn []
                    (try
-                     (syscall/ioctl event-fd (const/perf-event-ioc :disable))
+                     (syscall/close-fd link-fd)
                      (catch Exception e
-                       (log/warn "Failed to disable perf event:" e)))
-                   (syscall/close-fd event-fd)
-                   (remove-kprobe-event event-name))
+                       (log/warn "Failed to close BPF link:" e))))
 
         attachment (->ProgramAttachment
                      (if retprobe? :kretprobe :kprobe)
                      function
-                     event-fd
+                     link-fd
                      detach-fn)]
 
     (log/info "Attached" (if retprobe? "kretprobe" "kprobe")
-              "to" function "event-fd:" event-fd)
+              "to" function "link-fd:" link-fd)
 
     ;; Add attachment to program
     (update prog :attachments conj attachment)))

@@ -383,22 +383,28 @@
     (int (bpf-syscall :raw-tracepoint-open mem))))
 
 ;; Perf event syscall (needed for kprobes)
-(def ^:private perf-event-open-fn
-  (let [sym (.find libc-lookup "perf_event_open")]
-    (when (.isPresent sym)
+;; perf_event_open syscall wrapper
+(def ^:private perf-event-open-syscall-fn
+  (let [sym (.find libc-lookup "syscall")]
+    (if (.isPresent sym)
+      ;; syscall(long number, ...) for perf_event_open:
+      ;; syscall(298, struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd, unsigned long flags)
       (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
-            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_INT C_POINTER C_INT C_INT C_INT C_LONG)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_LONG C_LONG C_POINTER C_INT C_INT C_INT C_LONG)
             ^java.lang.foreign.Linker lnk linker]
-        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option []))))))
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option [])))
+      (throw (ex-info "Cannot find syscall function in libc"
+                      {:libc-lookup libc-lookup})))))
 
 (defn perf-event-open
   "Open a perf event (used for kprobes/uprobes)"
   [event-type config pid cpu group-fd flags]
-  (let [attr-mem (allocate-zeroed 128)]
+  (let [attr-size 128
+        attr-mem (allocate-zeroed attr-size)]
     ;; type
     (.set attr-mem C_INT 0 event-type)
     ;; size
-    (.set attr-mem C_INT 4 128)
+    (.set attr-mem C_INT 4 attr-size)
     ;; config
     (.set attr-mem C_LONG 8 config)
     ;; sample_period / sample_freq union - set to 1
@@ -410,13 +416,16 @@
     ;; flags as bitfield (disabled=1)
     (.set attr-mem C_LONG 40 1)
 
-    (let [result (.invokeWithArguments ^java.lang.invoke.MethodHandle perf-event-open-fn
-                                      [attr-mem
+    (let [result (.invokeWithArguments ^java.lang.invoke.MethodHandle perf-event-open-syscall-fn
+                                      [(long const/PERF_EVENT_OPEN_SYSCALL_NR)
+                                       attr-mem
                                        (int pid)
                                        (int cpu)
                                        (int group-fd)
-                                       (long flags)])]
-      (if (< (int result) 0)
+                                       (long flags)])
+          result-int (int result)]
+      (log/info "perf_event_open result:" result "int:" result-int "errno:" (when (< result-int 0) (get-errno)))
+      (if (< result-int 0)
         (let [errno (get-errno)
               errno-kw (errno->keyword errno)]
           (log/error "perf_event_open failed, errno:" errno errno-kw)
@@ -455,6 +464,51 @@
                           :errno errno
                           :errno-keyword errno-kw}))))
      (int result))))
+
+;; BPF_LINK_CREATE syscall
+(defn bpf-link-create-kprobe
+  "Create a BPF link for kprobe using BPF_LINK_CREATE (modern method)
+   Returns link FD"
+  [prog-fd function-name retprobe?]
+  (let [attr-mem (allocate-zeroed 128)
+            ;; Allocate memory for the symbol name
+        func-name-bytes (.getBytes (str function-name "\0") "UTF-8")
+        func-name-mem (.allocate *arena* (alength func-name-bytes) 1)]
+    (java.lang.foreign.MemorySegment/copy func-name-bytes 0 func-name-mem (java.lang.foreign.ValueLayout/JAVA_BYTE) 0 (alength func-name-bytes))
+
+    ;; Build bpf_attr for BPF_LINK_CREATE with kprobe_multi
+    ;; prog_fd (offset 0)
+    (.set attr-mem C_INT 0 prog-fd)
+    ;; attach_type (offset 8) - BPF_TRACE_KPROBE_MULTI = 42
+    (.set attr-mem C_INT 8 (const/attach-type->num :trace-kprobe-multi))
+    ;; flags (offset 12)
+    (.set attr-mem C_INT 12 (if retprobe? 1 0)) ; BPF_F_KPROBE_MULTI_RETURN = 1
+
+    ;; kprobe_multi substruct starts at offset 16
+    ;; kprobe_multi.flags (offset 16)
+    (.set attr-mem C_INT 16 0)
+    ;; kprobe_multi.cnt (offset 20)
+    (.set attr-mem C_INT 20 1)  ; attaching to 1 symbol
+    ;; kprobe_multi.syms (offset 24) - address of array of string pointers
+    ;; We need to create an array containing one pointer to our function name
+    (let [sym-ptr-array (.allocate *arena* 8 8)]  ; array of 1 pointer
+      (.set sym-ptr-array C_POINTER 0 func-name-mem) ; array[0] = func_name_mem
+      (.set attr-mem C_LONG 24 (.address sym-ptr-array)))  ; syms = address of array
+
+    (let [result (int (bpf-syscall :link-create attr-mem))]
+      (if (< result 0)
+        (let [errno (get-errno)
+              errno-kw (errno->keyword errno)]
+          (log/error "BPF_LINK_CREATE failed for kprobe, errno:" errno errno-kw)
+          (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                          {:errno errno
+                           :errno-keyword errno-kw
+                           :function function-name
+                           :retprobe? retprobe?})))
+        (do
+          (log/info "Created BPF link for" (if retprobe? "kretprobe" "kprobe")
+                    "on" function-name "link-fd:" result)
+          result)))))
 
 ;; Close file descriptor
 (def ^:private close-fn

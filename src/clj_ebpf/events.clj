@@ -9,7 +9,8 @@
            [java.nio ByteBuffer ByteOrder MappedByteBuffer]
            [java.nio.channels FileChannel]
            [java.nio.file Paths StandardOpenOption]
-           [java.io RandomAccessFile]))
+           [java.io RandomAccessFile]
+           [clj_ebpf.maps BpfMap]))
 
 ;; Ring Buffer Consumer
 
@@ -32,7 +33,7 @@
   "Read a single event from ring buffer
   Note: This is a simplified implementation.
   Full implementation requires memory-mapping the ring buffer."
-  [^maps.BpfMap ringbuf-map]
+  [^BpfMap ringbuf-map]
   ;; Ring buffers are read using the BPF_MAP_LOOKUP_AND_DELETE operation
   ;; However, the proper way is to memory-map the ring buffer
   ;; For MVP, we'll return nil and note this needs full implementation

@@ -1,4 +1,4 @@
-(ns examples.simple-kprobe
+(ns simple-kprobe
   "Simple kprobe example - trace sys_clone system call"
   (:require [clj-ebpf.core :as bpf]
             [clj-ebpf.utils :as utils]
@@ -55,6 +55,7 @@
 
     (catch Exception e
       (println "Error:" (.getMessage e))
+      (.printStackTrace e)
       (when-let [data (ex-data e)]
         (println "Details:" data)
         (when-let [log (:verifier-log data)]

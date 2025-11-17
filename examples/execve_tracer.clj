@@ -1,4 +1,4 @@
-(ns examples.execve-tracer
+(ns execve-tracer
   "Trace execve system calls using eBPF
    This example demonstrates:
    - Loading a BPF program
