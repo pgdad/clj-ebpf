@@ -6,7 +6,8 @@
             [clj-ebpf.maps :as maps]
             [clj-ebpf.programs :as programs]
             [clj-ebpf.events :as events]
-            [clj-ebpf.xdp :as xdp]))
+            [clj-ebpf.xdp :as xdp]
+            [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
 
@@ -97,6 +98,17 @@
 (def attach-xdp xdp/attach-xdp)
 (def detach-xdp xdp/detach-xdp)
 (def load-xdp-program xdp/load-xdp-program)
+
+;; ELF (Executable and Linkable Format)
+(def parse-elf-file elf/parse-elf-file)
+(def inspect-elf elf/inspect-elf)
+(def load-program-from-elf elf/load-program-from-elf)
+(def create-maps-from-elf elf/create-maps-from-elf)
+(def load-elf-program-and-maps elf/load-elf-program-and-maps)
+(def list-programs elf/list-programs)
+(def list-maps elf/list-maps)
+(def get-program elf/get-program)
+(def get-map-def elf/get-map-def)
 
 ;; Macros
 (defmacro with-map

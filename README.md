@@ -37,16 +37,17 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Comprehensive error handling
 - ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
 - ✅ **Per-CPU value aggregation helpers** (sum, max, min, avg)
-- ✅ **113 tests with 189 assertions - all passing**
+- ✅ **ELF object file parsing** (extract programs and maps from compiled .o files)
+- ✅ **129 tests with 245 assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
+- ✅ **ELF object file parsing** (load compiled BPF programs from .o files)
 - ⏳ TC (Traffic Control) support
 - ⏳ Cgroup attachment
 - ⏳ LSM (Linux Security Modules) hooks
 - ⏳ BTF (BPF Type Format) support
 - ⏳ CO-RE (Compile Once - Run Everywhere)
-- ⏳ ELF object file parsing
 - ⏳ C compilation integration
 - ⏳ BPF assembly DSL
 - ⏳ Perf event buffers
@@ -398,6 +399,71 @@ Efficient event reading from BPF ring buffers with memory mapping, epoll, and st
 - **Event pipelines** - Parser → Filter → Transform → Handler chains
 - **Real-time statistics** - Track throughput, errors, and performance
 - **Automatic resource management** - `with-ringbuf-consumer` macro ensures cleanup
+
+### ELF Object File Parsing
+
+Load compiled BPF programs from ELF (.o) files created with clang:
+
+```clojure
+(require '[clj-ebpf.core :as bpf])
+
+;; Inspect an ELF file to see what it contains
+(def info (bpf/inspect-elf "filter.o"))
+(println "Programs:" (:programs info))
+;; => [{:name "xdp_filter" :type :xdp :size 256}
+;;     {:name "kprobe/sys_clone" :type :kprobe :size 128}]
+
+(println "Maps:" (:maps info))
+;; => [{:name "packet_count" :type 1 :key-size 4 :value-size 8 :max-entries 1024}]
+
+(println "License:" (:license info))
+;; => "GPL"
+
+;; Load a specific program from ELF file
+(def prog-fd (bpf/load-program-from-elf "filter.o" "xdp_filter"))
+(println "Loaded program FD:" prog-fd)
+
+;; Create all maps defined in ELF file
+(def maps (bpf/create-maps-from-elf "filter.o"))
+(println "Created maps:" (keys maps))
+;; => ("packet_count" "allowed_ips")
+
+;; Load program and create maps in one call
+(let [{:keys [program-fd maps]} (bpf/load-elf-program-and-maps "filter.o" "xdp_filter")]
+  (println "Program FD:" program-fd)
+  (println "Maps:" (keys maps))
+
+  ;; Use the loaded program and maps
+  (bpf/map-update (get maps "packet_count") 0 0)
+  (bpf/attach-xdp "eth0" program-fd [:drv-mode]))
+
+;; Parse ELF file for detailed inspection
+(def elf-file (bpf/parse-elf-file "filter.o"))
+(def programs (bpf/list-programs elf-file))
+(def maps (bpf/list-maps elf-file))
+
+;; Get specific program by name
+(def prog (bpf/get-program elf-file "xdp_filter"))
+(println "Program type:" (:type prog))
+(println "Section:" (:section prog))
+(println "Bytecode size:" (alength (:insns prog)))
+```
+
+**Supported ELF Features:**
+- **Program extraction** - Automatically detect program type from section names
+- **Map definitions** - Parse `struct bpf_map_def` from maps section
+- **License detection** - Extract GPL/dual license strings
+- **Symbol tables** - Parse symbol information
+- **Relocations** - RELA relocation entries
+- **Section types** - Kprobe, tracepoint, XDP, TC, socket filter, etc.
+
+**Section Name Conventions:**
+- `kprobe/function_name` → Kprobe program
+- `kretprobe/function_name` → Kretprobe program
+- `tracepoint/category/name` → Tracepoint program
+- `xdp` or `xdp_*` → XDP program
+- `tc` or `classifier` → TC classifier
+- `socket*` → Socket filter
 
 ### Loading and Attaching Programs
 
