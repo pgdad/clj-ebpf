@@ -23,7 +23,13 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Kprobe/Kretprobe attachment
 - ✅ Tracepoint attachment
 - ✅ Raw tracepoint attachment (fully working alternative to kprobes)
-- ✅ Ring buffer event reading (basic)
+- ✅ **Enhanced ring buffer event processing**
+  - Memory-mapped ring buffers for zero-copy event reading
+  - Epoll-based event notification (efficient waiting)
+  - Batch event reading
+  - Event filtering and transformation pipelines
+  - Real-time statistics and monitoring
+  - Consumer lifecycle management with automatic cleanup
 - ✅ Map pinning to BPF filesystem (with data persistence)
 - ✅ Program pinning
 - ✅ Idiomatic Clojure APIs
@@ -31,7 +37,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Comprehensive error handling
 - ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
 - ✅ **Per-CPU value aggregation helpers** (sum, max, min, avg)
-- ✅ **99 tests with 302 assertions - all passing**
+- ✅ **113 tests with 189 assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -327,6 +333,71 @@ XDP provides high-performance packet processing at the network interface driver 
 - `XDP_REDIRECT` (4) - Redirect to different interface
 
 **Note:** XDP attachment requires `CAP_NET_ADMIN` capability. Generic XDP (`:skb-mode`) works on all network interfaces, while native XDP (`:drv-mode`) requires driver support.
+
+### Enhanced Ring Buffer Event Processing
+
+Efficient event reading from BPF ring buffers with memory mapping, epoll, and statistics:
+
+```clojure
+(require '[clj-ebpf.core :as bpf]
+         '[clj-ebpf.events :as events])
+
+;; Create a ring buffer map (4KB)
+(def ringbuf (bpf/create-ringbuf-map (* 4 1024) :map-name "events"))
+
+;; Define event structure (pid:u32, timestamp:u64, data:u32)
+(def parse-event (bpf/make-event-parser [:u32 :u64 :u32]))
+
+;; Create an event handler with filtering and transformation
+(def handle-event
+  (bpf/make-event-handler
+    :parser parse-event
+    :filter (fn [[pid ts data]] (> pid 1000))      ; Filter system pids
+    :transform (fn [[pid ts data]]                  ; Transform to map
+                {:pid pid
+                 :timestamp ts
+                 :data data})
+    :handler println))                              ; Print events
+
+;; Start a ring buffer consumer with automatic cleanup
+(bpf/with-ringbuf-consumer [consumer {:map ringbuf
+                                       :callback handle-event
+                                       :deserializer identity}]
+  ;; Consumer is running in background thread
+  (println "Consumer started, waiting for events...")
+  (Thread/sleep 5000)
+
+  ;; Check statistics
+  (let [stats (bpf/get-consumer-stats consumer)]
+    (println "Events processed:" (:events-processed stats))
+    (println "Events/sec:" (:events-per-second stats))
+    (println "Batches read:" (:batches-read stats))
+    (println "Errors:" (:errors stats))))
+;; Consumer automatically stopped and cleaned up
+
+;; Synchronous event processing
+(def event-count
+  (bpf/process-events ringbuf
+                      #(println "Event:" %)
+                      :max-events 100
+                      :timeout-ms 5000
+                      :deserializer parse-event))
+(println "Processed" event-count "events")
+
+;; Peek at events without consuming them
+(let [events (bpf/peek-ringbuf-events ringbuf
+                                      :max-events 10
+                                      :deserializer parse-event)]
+  (println "Next events in buffer:" events))
+```
+
+**Key Features:**
+- **Memory-mapped ring buffers** - Zero-copy event reading directly from kernel memory
+- **Epoll-based notification** - Efficient event waiting without busy polling
+- **Batch reading** - Read multiple events in a single operation
+- **Event pipelines** - Parser → Filter → Transform → Handler chains
+- **Real-time statistics** - Track throughput, errors, and performance
+- **Automatic resource management** - `with-ringbuf-consumer` macro ensures cleanup
 
 ### Loading and Attaching Programs
 

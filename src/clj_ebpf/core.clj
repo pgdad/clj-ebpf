@@ -77,9 +77,12 @@
 (def create-ringbuf-consumer events/create-ringbuf-consumer)
 (def start-ringbuf-consumer events/start-ringbuf-consumer)
 (def stop-ringbuf-consumer events/stop-ringbuf-consumer)
+(def get-consumer-stats events/get-consumer-stats)
 (def process-events events/process-events)
+(def peek-ringbuf-events events/peek-ringbuf-events)
 (def make-event-parser events/make-event-parser)
 (def make-event-serializer events/make-event-serializer)
+(def make-event-handler events/make-event-handler)
 
 ;; Utils
 (def check-bpf-available utils/check-bpf-available)

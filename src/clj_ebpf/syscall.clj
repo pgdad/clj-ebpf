@@ -666,15 +666,30 @@
     (when (.isPresent sym)
       (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)]
         ;; We'll create different handles for different signatures as needed
-        {:syscall-3args (.downcallHandle linker mem-seg
+        {:syscall-1arg (.downcallHandle linker mem-seg
+                                       (make-function-descriptor C_LONG C_LONG C_LONG)
+                                       (into-array java.lang.foreign.Linker$Option []))
+         :syscall-2args (.downcallHandle linker mem-seg
+                                        (make-function-descriptor C_LONG C_LONG C_LONG C_LONG)
+                                        (into-array java.lang.foreign.Linker$Option []))
+         :syscall-3args (.downcallHandle linker mem-seg
                                         (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG)
                                         (into-array java.lang.foreign.Linker$Option []))
          :syscall-4args (.downcallHandle linker mem-seg
                                         (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG)
                                         (into-array java.lang.foreign.Linker$Option []))
+         :syscall-5args (.downcallHandle linker mem-seg
+                                        (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG)
+                                        (into-array java.lang.foreign.Linker$Option []))
+         :syscall-6args (.downcallHandle linker mem-seg
+                                        (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG)
+                                        (into-array java.lang.foreign.Linker$Option []))
          :syscall-ptr-args (.downcallHandle linker mem-seg
                                            (make-function-descriptor C_LONG C_LONG C_LONG C_POINTER C_LONG)
-                                           (into-array java.lang.foreign.Linker$Option []))}))))
+                                           (into-array java.lang.foreign.Linker$Option []))
+         :syscall-4ptr-args (.downcallHandle linker mem-seg
+                                            (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_POINTER)
+                                            (into-array java.lang.foreign.Linker$Option []))}))))
 
 (defn raw-syscall
   "Make a raw syscall with variable arguments.
@@ -688,30 +703,63 @@
   (when-not raw-syscall-fn
     (throw (ex-info "syscall function not available" {})))
 
-  (let [arg-count (count args)]
+  (let [arg-count (count args)
+        has-pointer? (some #(instance? MemorySegment %) args)]
     (try
       (cond
+        ;; 0 arguments (e.g., epoll_create1 with flags in nr)
+        (= arg-count 0)
+        (.invokeWithArguments (:syscall-1arg raw-syscall-fn)
+                             [(long nr)])
+
+        ;; 1 argument
+        (and (= arg-count 1) (not has-pointer?))
+        (.invokeWithArguments (:syscall-1arg raw-syscall-fn)
+                             [(long nr) (long (nth args 0))])
+
+        ;; 2 arguments (e.g., munmap)
+        (and (= arg-count 2) (not has-pointer?))
+        (.invokeWithArguments (:syscall-2args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1))])
+
         ;; 3 integer arguments (e.g., socket)
-        (and (= arg-count 3)
-             (every? integer? args))
+        (and (= arg-count 3) (not has-pointer?))
         (.invokeWithArguments (:syscall-3args raw-syscall-fn)
                              [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2))])
 
-        ;; 4 arguments with possible pointer (e.g., sendto, recvfrom)
-        (and (= arg-count 4)
-             (instance? MemorySegment (nth args 1)))
+        ;; 4 integer arguments (e.g., epoll_wait)
+        (and (= arg-count 4) (not has-pointer?))
+        (.invokeWithArguments (:syscall-4args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2)) (long (nth args 3))])
+
+        ;; 5 integer arguments
+        (and (= arg-count 5) (not has-pointer?))
+        (.invokeWithArguments (:syscall-5args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2)) (long (nth args 3)) (long (nth args 4))])
+
+        ;; 6 integer arguments (e.g., mmap: addr, length, prot, flags, fd, offset)
+        (and (= arg-count 6) (not has-pointer?))
+        (.invokeWithArguments (:syscall-6args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2)) (long (nth args 3)) (long (nth args 4)) (long (nth args 5))])
+
+        ;; 3 arguments with pointer (e.g., bind)
+        (and (= arg-count 3) (instance? MemorySegment (nth args 1)))
         (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
                              [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
 
-        ;; 3 arguments with pointer (e.g., bind)
-        (and (= arg-count 3)
-             (instance? MemorySegment (nth args 1)))
+        ;; 4 arguments with pointer at position 1 (e.g., sendto, recvfrom)
+        (and (= arg-count 4) (instance? MemorySegment (nth args 1)))
         (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
                              [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
+
+        ;; 4 arguments with pointer at position 3 (e.g., epoll_ctl, epoll_wait)
+        (and (= arg-count 4) (instance? MemorySegment (nth args 3)))
+        (.invokeWithArguments (:syscall-4ptr-args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2)) (nth args 3)])
 
         :else
         (throw (ex-info "Unsupported syscall signature"
-                       {:nr nr :arg-count arg-count :args args})))
+                       {:nr nr :arg-count arg-count :args args :has-pointer has-pointer?})))
       (catch Exception e
         (throw (ex-info "Syscall failed" {:nr nr :args args :cause e}))))))
 
