@@ -1,7 +1,7 @@
 (ns clj-ebpf.utils-test
   (:require [clojure.test :refer :all]
             [clj-ebpf.utils :as utils])
-  (:import [com.sun.jna Pointer Memory]))
+  (:import [java.lang.foreign MemorySegment]))
 
 (deftest test-integer-encoding
   (testing "32-bit integer encoding/decoding"
@@ -25,46 +25,47 @@
       (is (= 2 (count bytes)))
       (is (= value decoded)))))
 
-(deftest test-pointer-operations
-  (testing "Integer to/from pointer"
+(deftest test-segment-operations
+  (testing "Integer to/from segment"
     (let [value 42
-          ptr (utils/int->pointer value)
-          decoded (utils/pointer->int ptr)]
-      (is (instance? Memory ptr))
+          seg (utils/int->segment value)
+          decoded (utils/segment->int seg)]
+      (is (instance? MemorySegment seg))
       (is (= value decoded))))
 
-  (testing "Long to/from pointer"
+  (testing "Long to/from segment"
     (let [value 123456789
-          ptr (utils/long->pointer value)
-          decoded (utils/pointer->long ptr)]
-      (is (instance? Memory ptr))
+          seg (utils/long->segment value)
+          decoded (utils/segment->long seg)]
+      (is (instance? MemorySegment seg))
       (is (= value decoded))))
 
-  (testing "Bytes to/from pointer"
+  (testing "Bytes to/from segment"
     (let [bytes (byte-array [1 2 3 4 5])
-          ptr (utils/bytes->pointer bytes)
-          decoded (utils/pointer->bytes ptr 5)]
-      (is (instance? Memory ptr))
+          seg (utils/bytes->segment bytes)
+          decoded (utils/segment->bytes seg 5)]
+      (is (instance? MemorySegment seg))
       (is (= (seq bytes) (seq decoded))))))
 
 (deftest test-string-operations
-  (testing "String to/from pointer"
+  (testing "String to/from segment"
     (let [s "Hello, BPF!"
-          ptr (utils/string->pointer s)
-          decoded (utils/pointer->string ptr 100)]
-      (is (instance? Memory ptr))
+          seg (utils/string->segment s)
+          decoded (utils/segment->string seg 100)]
+      (is (instance? MemorySegment seg))
       (is (= s decoded)))))
 
 (deftest test-memory-allocation
   (testing "Allocate memory"
     (let [mem (utils/allocate-memory 128)]
-      (is (instance? Memory mem))))
+      (is (instance? MemorySegment mem))))
 
   (testing "Zero memory"
     (let [mem (utils/allocate-memory 16)
-          _ (doseq [i (range 16)] (.setByte mem i (byte 0xff)))
+          ;; Fill with 0xff using MemorySegment API
+          _ (.fill mem (unchecked-byte 0xff))
           _ (utils/zero-memory mem 16)]
-      (is (every? zero? (seq (utils/pointer->bytes mem 16)))))))
+      (is (every? zero? (seq (utils/segment->bytes mem 16)))))))
 
 (deftest test-struct-packing
   (testing "Pack struct"

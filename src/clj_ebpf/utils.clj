@@ -25,20 +25,23 @@
   "Read bytes from a memory segment"
   [^MemorySegment seg size]
   (when (and seg (not= seg MemorySegment/NULL))
-    (.toArray seg C_BYTE 0 size)))
+    (let [bytes (byte-array size)]
+      (MemorySegment/copy seg 0 (MemorySegment/ofArray bytes) 0 size)
+      bytes)))
 
 (defn bytes->segment
   "Write bytes to a newly allocated memory segment"
   [^bytes bytes]
   (when bytes
-    (let [seg (.allocate *arena* (long (count bytes)) 1)]
-      (.copyFrom seg 0 (MemorySegment/ofArray bytes) 0 (count bytes))
+    (let [seg (.allocate *arena* (long (count bytes)) 1)
+          src (MemorySegment/ofArray bytes)]
+      (MemorySegment/copy src 0 seg 0 (count bytes))
       seg)))
 
 (defn zero-memory
   "Zero out memory segment"
   [^MemorySegment seg size]
-  (.fill seg 0 size (byte 0)))
+  (.fill (.asSlice seg 0 size) (byte 0)))
 
 ;; Endianness utilities
 
@@ -137,18 +140,23 @@
   [^String s]
   (when s
     (let [bytes (.getBytes s "UTF-8")
-          seg (.allocate *arena* (inc (count bytes)) 1)]
-      (.copyFrom seg 0 (MemorySegment/ofArray bytes) 0 (count bytes))
-      (.set seg C_BYTE (count bytes) (byte 0))
+          seg (.allocate *arena* (inc (count bytes)) 1)
+          src (MemorySegment/ofArray bytes)]
+      (MemorySegment/copy src 0 seg 0 (count bytes))
+      ;; Set null terminator at the last byte
+      (let [null-bytes (byte-array 1)]
+        (aset null-bytes 0 (byte 0))
+        (MemorySegment/copy (MemorySegment/ofArray null-bytes) 0 seg (count bytes) 1))
       seg)))
 
 (defn segment->string
   "Read null-terminated string from memory segment"
   [^MemorySegment seg max-len]
   (when (and seg (not= seg MemorySegment/NULL))
-    (let [bytes (.toArray seg C_BYTE 0 max-len)
+    (let [actual-len (min (.byteSize seg) max-len)
+          bytes (segment->bytes seg actual-len)
           null-idx (or (first (keep-indexed #(when (zero? %2) %1) bytes))
-                      max-len)]
+                      actual-len)]
       (String. bytes 0 null-idx "UTF-8"))))
 
 ;; Compatibility alias

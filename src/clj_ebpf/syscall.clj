@@ -6,29 +6,48 @@
            [java.lang.invoke MethodHandle]))
 
 ;; Panama FFI setup
-(def ^:private linker (Linker/nativeLinker))
-(def ^:private libc-lookup (SymbolLookup/loaderLookup))
-
 ;; Arena for memory allocation (auto-managed by GC)
 (def ^:private ^:dynamic *arena* (Arena/ofAuto))
+
+(def ^:private linker (Linker/nativeLinker))
+(def ^:private libc-lookup
+  (or
+   ;; Try common libc paths on Linux
+   (try (SymbolLookup/libraryLookup "/lib/x86_64-linux-gnu/libc.so.6" *arena*) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "libc.so.6" *arena*) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "c" *arena*) (catch Exception _ nil))
+   ;; Fallback to loader lookup
+   (SymbolLookup/loaderLookup)))
 
 ;; Value layouts for common types
 (def ^:private C_INT ValueLayout/JAVA_INT)
 (def ^:private C_LONG ValueLayout/JAVA_LONG)
 (def ^:private C_POINTER (ValueLayout/ADDRESS))
 
+;; Helper to create FunctionDescriptor with varargs
+(defn- make-function-descriptor
+  "Create a FunctionDescriptor - helper to avoid reflection issues"
+  ^java.lang.foreign.FunctionDescriptor
+  [^java.lang.foreign.MemoryLayout return-layout & arg-layouts]
+  (let [^"[Ljava.lang.foreign.MemoryLayout;" layouts-array (into-array java.lang.foreign.MemoryLayout (or arg-layouts []))]
+    (java.lang.foreign.FunctionDescriptor/of return-layout layouts-array)))
+
 ;; Get errno from libc
 (def ^:private errno-location
-  (let [sym (.find libc-lookup "__errno_location")
-        descriptor (FunctionDescriptor/of C_POINTER)]
+  (let [sym (.find libc-lookup "__errno_location")]
     (when (.isPresent sym)
-      (.downcallHandle linker (.get sym) descriptor))))
+      ;; Function with no parameters returning a pointer
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_POINTER)
+            ^java.lang.foreign.Linker lnk linker]
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option []))))))
+
 
 (defn get-errno
   "Get the last errno value"
   []
   (if errno-location
-    (let [errno-ptr (.invoke errno-location (into-array Object []))]
+    (let [errno-ptr (.invokeWithArguments ^java.lang.invoke.MethodHandle errno-location [])]
       (.get ^MemorySegment errno-ptr C_INT 0))
     0))
 
@@ -41,9 +60,14 @@
 ;; Syscall function
 (def ^:private syscall-fn
   (let [sym (.find libc-lookup "syscall")]
-    (when (.isPresent sym)
-      (let [descriptor (FunctionDescriptor/of C_LONG C_LONG C_INT C_POINTER C_INT)]
-        (.downcallHandle linker (.get sym) descriptor)))))
+    (if (.isPresent sym)
+      ;; syscall(long number, ...) - in our case: syscall(BPF_NR, cmd:int, attr:ptr, size:int)
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_LONG C_LONG C_INT C_POINTER C_INT)
+            ^java.lang.foreign.Linker lnk linker]
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option [])))
+      (throw (ex-info "Cannot find syscall function in libc. Native access may need to be enabled with --enable-native-access=ALL-UNNAMED"
+                      {:libc-lookup libc-lookup})))))
 
 ;; Helper to allocate and zero memory
 (defn allocate-zeroed
@@ -61,15 +85,15 @@
    ^int value-size
    ^int max-entries
    ^int map-flags
-   ^int inner-map-fd
-   ^int numa-node
-   ^String map-name
-   ^int map-ifindex
-   ^int btf-fd
-   ^int btf-key-type-id
-   ^int btf-value-type-id
-   ^int btf-vmlinux-value-type-id
-   ^long map-extra])
+   ^Integer inner-map-fd        ;; Optional - nullable
+   ^Integer numa-node           ;; Optional - nullable
+   ^String map-name             ;; Optional - nullable
+   ^Integer map-ifindex         ;; Optional - nullable
+   ^Integer btf-fd              ;; Optional - nullable
+   ^Integer btf-key-type-id     ;; Optional - nullable
+   ^Integer btf-value-type-id   ;; Optional - nullable
+   ^Integer btf-vmlinux-value-type-id  ;; Optional - nullable
+   ^Long map-extra])            ;; Optional - nullable
 
 (defn map-create-attr->segment
   "Convert MapCreateAttr to MemorySegment for syscall"
@@ -86,8 +110,9 @@
       (.set mem C_INT 24 (:numa-node attr)))
     (when (:map-name attr)
       (let [name-bytes (.getBytes (:map-name attr) "UTF-8")
-            len (min (count name-bytes) (dec const/BPF_OBJ_NAME_LEN))]
-        (.copyFrom mem 28 (MemorySegment/ofArray name-bytes) 0 len)))
+            len (min (count name-bytes) (dec const/BPF_OBJ_NAME_LEN))
+            src (MemorySegment/ofArray name-bytes)]
+        (MemorySegment/copy src 0 mem 28 len)))
     (when (:map-ifindex attr)
       (.set mem C_INT 44 (:map-ifindex attr)))
     (when (:btf-fd attr)
@@ -137,23 +162,23 @@
    ^int insn-cnt
    ^MemorySegment insns
    ^String license
-   ^int log-level
-   ^int log-size
-   ^MemorySegment log-buf
-   ^int kern-version
-   ^int prog-flags
-   ^String prog-name
-   ^int prog-ifindex
-   ^int expected-attach-type
-   ^int prog-btf-fd
-   ^int func-info-rec-size
-   ^MemorySegment func-info
-   ^int func-info-cnt
-   ^int line-info-rec-size
-   ^MemorySegment line-info
-   ^int line-info-cnt
-   ^int attach-btf-id
-   ^int attach-prog-fd])
+   ^Integer log-level           ;; Optional - nullable
+   ^Integer log-size            ;; Optional - nullable
+   ^MemorySegment log-buf       ;; Optional - nullable
+   ^Integer kern-version        ;; Optional - nullable
+   ^Integer prog-flags          ;; Optional - nullable
+   ^String prog-name            ;; Optional - nullable
+   ^Integer prog-ifindex        ;; Optional - nullable
+   ^Integer expected-attach-type ;; Optional - nullable
+   ^Integer prog-btf-fd         ;; Optional - nullable
+   ^Integer func-info-rec-size  ;; Optional - nullable
+   ^MemorySegment func-info     ;; Optional - nullable
+   ^Integer func-info-cnt       ;; Optional - nullable
+   ^Integer line-info-rec-size  ;; Optional - nullable
+   ^MemorySegment line-info     ;; Optional - nullable
+   ^Integer line-info-cnt       ;; Optional - nullable
+   ^Integer attach-btf-id       ;; Optional - nullable
+   ^Integer attach-prog-fd])    ;; Optional - nullable
 
 (defn prog-load-attr->segment
   "Convert ProgLoadAttr to MemorySegment for syscall"
@@ -164,8 +189,9 @@
     (.set mem C_POINTER 8 (:insns attr))
     (when (:license attr)
       (let [lic-bytes (.getBytes (:license attr) "UTF-8")
-            lic-mem (.allocate *arena* (inc (count lic-bytes)) 1)]
-        (.copyFrom lic-mem 0 (MemorySegment/ofArray lic-bytes) 0 (count lic-bytes))
+            lic-mem (.allocate *arena* (inc (count lic-bytes)) 1)
+            src (MemorySegment/ofArray lic-bytes)]
+        (MemorySegment/copy src 0 lic-mem 0 (count lic-bytes))
         (.set mem C_POINTER 16 lic-mem)))
     (.set mem C_INT 24 (or (:log-level attr) 0))
     (.set mem C_INT 28 (or (:log-size attr) 0))
@@ -174,8 +200,9 @@
     (.set mem C_INT 44 (or (:prog-flags attr) 0))
     (when (:prog-name attr)
       (let [name-bytes (.getBytes (:prog-name attr) "UTF-8")
-            len (min (count name-bytes) (dec const/BPF_OBJ_NAME_LEN))]
-        (.copyFrom mem 48 (MemorySegment/ofArray name-bytes) 0 len)))
+            len (min (count name-bytes) (dec const/BPF_OBJ_NAME_LEN))
+            src (MemorySegment/ofArray name-bytes)]
+        (MemorySegment/copy src 0 mem 48 len)))
     (when (:prog-ifindex attr)
       (.set mem C_INT 64 (:prog-ifindex attr)))
     (when (:expected-attach-type attr)
@@ -187,15 +214,16 @@
 (defrecord ObjPinAttr
   [^String pathname
    ^int bpf-fd
-   ^int file-flags])
+   ^Integer file-flags])  ;; Optional - nullable
 
 (defn obj-pin-attr->segment
   "Convert ObjPinAttr to MemorySegment for syscall"
   [attr]
   (let [mem (allocate-zeroed 128)
         path-bytes (.getBytes (:pathname attr) "UTF-8")
-        path-mem (.allocate *arena* (inc (count path-bytes)) 1)]
-    (.copyFrom path-mem 0 (MemorySegment/ofArray path-bytes) 0 (count path-bytes))
+        path-mem (.allocate *arena* (inc (count path-bytes)) 1)
+        src (MemorySegment/ofArray path-bytes)]
+    (MemorySegment/copy src 0 path-mem 0 (count path-bytes))
     (.set mem C_POINTER 0 path-mem)
     (.set mem C_INT 8 (:bpf-fd attr))
     (.set mem C_INT 12 (or (:file-flags attr) 0))
@@ -210,8 +238,9 @@
   [attr]
   (let [mem (allocate-zeroed 128)
         name-bytes (.getBytes (:name attr) "UTF-8")
-        name-mem (.allocate *arena* (inc (count name-bytes)) 1)]
-    (.copyFrom name-mem 0 (MemorySegment/ofArray name-bytes) 0 (count name-bytes))
+        name-mem (.allocate *arena* (inc (count name-bytes)) 1)
+        src (MemorySegment/ofArray name-bytes)]
+    (MemorySegment/copy src 0 name-mem 0 (count name-bytes))
     (.set mem C_POINTER 0 name-mem)
     (.set mem C_INT 8 (:prog-fd attr))
     mem))
@@ -223,12 +252,11 @@
   (let [cmd-num (if (keyword? cmd)
                   (const/cmd->num cmd)
                   cmd)
-        result (.invoke ^MethodHandle syscall-fn
-                       (into-array Object
-                                  [(long const/BPF_SYSCALL_NR)
-                                   (int cmd-num)
-                                   attr-mem
-                                   (int 128)]))]
+        result (.invokeWithArguments ^java.lang.invoke.MethodHandle syscall-fn
+                                    [(long const/BPF_SYSCALL_NR)
+                                     (int cmd-num)
+                                     attr-mem
+                                     (int 128)])]
     (if (< (long result) 0)
       (let [errno (get-errno)
             errno-kw (errno->keyword errno)]
@@ -356,8 +384,10 @@
 (def ^:private perf-event-open-fn
   (let [sym (.find libc-lookup "perf_event_open")]
     (when (.isPresent sym)
-      (let [descriptor (FunctionDescriptor/of C_INT C_POINTER C_INT C_INT C_INT C_LONG)]
-        (.downcallHandle linker (.get sym) descriptor)))))
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_INT C_POINTER C_INT C_INT C_INT C_LONG)
+            ^java.lang.foreign.Linker lnk linker]
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option []))))))
 
 (defn perf-event-open
   "Open a perf event (used for kprobes/uprobes)"
@@ -378,13 +408,12 @@
     ;; flags as bitfield (disabled=1)
     (.set attr-mem C_LONG 40 1)
 
-    (let [result (.invoke ^MethodHandle perf-event-open-fn
-                         (into-array Object
-                                    [attr-mem
-                                     (int pid)
-                                     (int cpu)
-                                     (int group-fd)
-                                     (long flags)]))]
+    (let [result (.invokeWithArguments ^java.lang.invoke.MethodHandle perf-event-open-fn
+                                      [attr-mem
+                                       (int pid)
+                                       (int cpu)
+                                       (int group-fd)
+                                       (long flags)])]
       (if (< (int result) 0)
         (let [errno (get-errno)
               errno-kw (errno->keyword errno)]
@@ -400,18 +429,20 @@
 (def ^:private ioctl-fn
   (let [sym (.find libc-lookup "ioctl")]
     (when (.isPresent sym)
-      (let [descriptor (FunctionDescriptor/of C_INT C_INT C_LONG C_INT)]
-        (.downcallHandle linker (.get sym) descriptor)))))
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_INT C_INT C_LONG C_INT)
+            ^java.lang.foreign.Linker lnk linker]
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option []))))))
 
 (defn ioctl
   "Make an ioctl syscall"
   ([fd request]
    (ioctl fd request 0))
   ([fd request arg]
-   (let [result (.invoke ^MethodHandle ioctl-fn
-                        (into-array Object [(int fd)
-                                           (long request)
-                                           (int arg)]))]
+   (let [result (.invokeWithArguments ^java.lang.invoke.MethodHandle ioctl-fn
+                                     [(int fd)
+                                      (long request)
+                                      (int arg)])]
      (when (< (int result) 0)
        (let [errno (get-errno)
              errno-kw (errno->keyword errno)]
@@ -427,14 +458,16 @@
 (def ^:private close-fn
   (let [sym (.find libc-lookup "close")]
     (when (.isPresent sym)
-      (let [descriptor (FunctionDescriptor/of C_INT C_INT)]
-        (.downcallHandle linker (.get sym) descriptor)))))
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)
+            ^java.lang.foreign.FunctionDescriptor desc (make-function-descriptor C_INT C_INT)
+            ^java.lang.foreign.Linker lnk linker]
+        (.downcallHandle lnk mem-seg desc (into-array java.lang.foreign.Linker$Option []))))))
 
 (defn close-fd
   "Close a file descriptor"
   [fd]
   (when (and fd (>= fd 0))
-    (.invoke ^MethodHandle close-fn (into-array Object [(int fd)]))))
+    (.invokeWithArguments ^java.lang.invoke.MethodHandle close-fn [(int fd)])))
 
 ;; Arena management for scoped allocations
 (defn with-arena
