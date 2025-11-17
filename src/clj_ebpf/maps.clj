@@ -293,6 +293,56 @@
                :value-serializer utils/int->bytes
                :value-deserializer utils/bytes->int}))
 
+(defn create-lru-hash-map
+  "Create an LRU (Least Recently Used) hash map with integer keys and values
+
+  LRU maps automatically evict the least recently used entries when full,
+  making them ideal for caching scenarios.
+
+  Parameters:
+  - max-entries: Maximum number of entries (also the LRU cache size)
+
+  Optional keyword arguments:
+  - :key-size - Size of key in bytes (default: 4)
+  - :value-size - Size of value in bytes (default: 4)
+  - :map-name - Name for the map"
+  [max-entries & {:keys [key-size value-size map-name]
+                  :or {key-size 4 value-size 4}}]
+  (create-map {:map-type :lru-hash
+               :key-size key-size
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-lru-percpu-hash-map
+  "Create a per-CPU LRU hash map with integer keys and values
+
+  Like LRU hash maps, but each CPU has its own separate LRU cache,
+  providing better performance for multi-core systems.
+
+  Parameters:
+  - max-entries: Maximum number of entries per CPU
+
+  Optional keyword arguments:
+  - :key-size - Size of key in bytes (default: 4)
+  - :value-size - Size of value in bytes (default: 4)
+  - :map-name - Name for the map"
+  [max-entries & {:keys [key-size value-size map-name]
+                  :or {key-size 4 value-size 4}}]
+  (create-map {:map-type :lru-percpu-hash
+               :key-size key-size
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
 (defn create-ringbuf-map
   "Create a ring buffer map
   max-entries must be a power of 2 and page-aligned"
