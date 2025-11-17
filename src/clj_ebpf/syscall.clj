@@ -658,6 +658,63 @@
   (when (and fd (>= fd 0))
     (.invokeWithArguments ^java.lang.invoke.MethodHandle close-fn [(int fd)])))
 
+;; Raw syscall bindings for XDP/netlink support
+
+(def ^:private raw-syscall-fn
+  "General-purpose syscall function for variable argument syscalls"
+  (let [sym (.find libc-lookup "syscall")]
+    (when (.isPresent sym)
+      (let [^java.lang.foreign.MemorySegment mem-seg (.get sym)]
+        ;; We'll create different handles for different signatures as needed
+        {:syscall-3args (.downcallHandle linker mem-seg
+                                        (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG)
+                                        (into-array java.lang.foreign.Linker$Option []))
+         :syscall-4args (.downcallHandle linker mem-seg
+                                        (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_LONG)
+                                        (into-array java.lang.foreign.Linker$Option []))
+         :syscall-ptr-args (.downcallHandle linker mem-seg
+                                           (make-function-descriptor C_LONG C_LONG C_LONG C_POINTER C_LONG)
+                                           (into-array java.lang.foreign.Linker$Option []))}))))
+
+(defn raw-syscall
+  "Make a raw syscall with variable arguments.
+
+  Parameters:
+  - nr: syscall number
+  - args: variable arguments (integers or MemorySegments)
+
+  Returns the syscall result (may be negative on error)"
+  [nr & args]
+  (when-not raw-syscall-fn
+    (throw (ex-info "syscall function not available" {})))
+
+  (let [arg-count (count args)]
+    (try
+      (cond
+        ;; 3 integer arguments (e.g., socket)
+        (and (= arg-count 3)
+             (every? integer? args))
+        (.invokeWithArguments (:syscall-3args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (long (nth args 1)) (long (nth args 2))])
+
+        ;; 4 arguments with possible pointer (e.g., sendto, recvfrom)
+        (and (= arg-count 4)
+             (instance? MemorySegment (nth args 1)))
+        (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
+
+        ;; 3 arguments with pointer (e.g., bind)
+        (and (= arg-count 3)
+             (instance? MemorySegment (nth args 1)))
+        (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
+
+        :else
+        (throw (ex-info "Unsupported syscall signature"
+                       {:nr nr :arg-count arg-count :args args})))
+      (catch Exception e
+        (throw (ex-info "Syscall failed" {:nr nr :args args :cause e}))))))
+
 ;; Arena management for scoped allocations
 (defn with-arena
   "Execute function with a confined arena for memory allocations"

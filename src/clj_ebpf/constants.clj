@@ -184,6 +184,28 @@
 (def int->attach-type
   (into {} (map (fn [[k v]] [v k]) attach-type)))
 
+;; XDP action codes (return values for XDP programs)
+(def xdp-action
+  {:aborted 0    ; Error occurred, drop packet
+   :drop 1       ; Drop packet
+   :pass 2       ; Pass packet to network stack
+   :tx 3         ; Transmit packet back out same interface
+   :redirect 4}) ; Redirect to different interface
+
+(def xdp-action->int
+  (into {} (map (fn [[k v]] [k v]) xdp-action)))
+
+(def int->xdp-action
+  (into {} (map (fn [[k v]] [v k]) xdp-action)))
+
+;; XDP attachment flags (for netlink)
+(def xdp-flags
+  {:update-if-noexist 1  ; Only attach if no XDP program exists
+   :skb-mode 2           ; Generic XDP (slower, kernel mode)
+   :drv-mode 4           ; Native XDP (driver mode, fastest)
+   :hw-mode 8            ; Hardware offload mode
+   :replace 16})         ; Replace existing program
+
 ;; Map flags
 (def map-flags
   {:no-prealloc 0x01

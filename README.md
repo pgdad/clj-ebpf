@@ -34,7 +34,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **99 tests with 302 assertions - all passing**
 
 ### Planned (Future Phases)
-- ⏳ XDP (eXpress Data Path) support
+- ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
 - ⏳ TC (Traffic Control) support
 - ⏳ Cgroup attachment
 - ⏳ LSM (Linux Security Modules) hooks
@@ -275,6 +275,58 @@ Or for Leiningen `project.clj`:
   ;; Basic creation and configuration is supported
   (println "LPM trie created with" (:max-entries trie) "max entries"))
 ```
+
+### XDP (eXpress Data Path)
+
+XDP provides high-performance packet processing at the network interface driver level:
+
+```clojure
+(require '[clj-ebpf.xdp :as xdp]
+         '[clj-ebpf.programs :as programs])
+
+;; Get network interface information
+(xdp/interface-name->index "eth0")
+;; => 2
+
+(xdp/interface-index->name 2)
+;; => "eth0"
+
+;; Simple XDP program that passes all packets
+;; Returns XDP_PASS (2)
+(def xdp-bytecode
+  (byte-array [0xb7 0x00 0x00 0x00 0x02 0x00 0x00 0x00  ; mov r0, 2 (XDP_PASS)
+               0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])) ; exit
+
+;; Load XDP program
+(def prog-fd (xdp/load-xdp-program xdp-bytecode
+                                   :prog-name "xdp_pass"
+                                   :license "GPL"))
+
+;; Attach to network interface
+;; Modes: :skb-mode (generic), :drv-mode (native), :hw-mode (hardware offload)
+(xdp/attach-xdp "eth0" prog-fd [:drv-mode])
+
+;; Later, detach the program
+(xdp/detach-xdp "eth0" [:drv-mode])
+(syscall/close-fd prog-fd)
+
+;; Or use the convenience macro for automatic cleanup:
+(xdp/with-xdp [ifindex (xdp/attach-xdp "eth0" prog-fd [:drv-mode])]
+  ;; XDP program is active on interface
+  (println "XDP program attached to interface" ifindex)
+  ;; Do packet processing...
+  )
+;; Program automatically detached when leaving scope
+```
+
+**XDP Action Codes:**
+- `XDP_ABORTED` (0) - Error occurred, drop packet
+- `XDP_DROP` (1) - Drop packet
+- `XDP_PASS` (2) - Pass packet to network stack
+- `XDP_TX` (3) - Transmit packet back out same interface
+- `XDP_REDIRECT` (4) - Redirect to different interface
+
+**Note:** XDP attachment requires `CAP_NET_ADMIN` capability. Generic XDP (`:skb-mode`) works on all network interfaces, while native XDP (`:drv-mode`) requires driver support.
 
 ### Loading and Attaching Programs
 

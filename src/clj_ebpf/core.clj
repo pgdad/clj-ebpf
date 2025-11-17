@@ -5,7 +5,8 @@
             [clj-ebpf.utils :as utils]
             [clj-ebpf.maps :as maps]
             [clj-ebpf.programs :as programs]
-            [clj-ebpf.events :as events]))
+            [clj-ebpf.events :as events]
+            [clj-ebpf.xdp :as xdp]))
 
 ;; Re-export main APIs
 
@@ -87,6 +88,13 @@
 (def bpf-fs-mounted? utils/bpf-fs-mounted?)
 (def ensure-bpf-fs utils/ensure-bpf-fs)
 
+;; XDP (eXpress Data Path)
+(def interface-name->index xdp/interface-name->index)
+(def interface-index->name xdp/interface-index->name)
+(def attach-xdp xdp/attach-xdp)
+(def detach-xdp xdp/detach-xdp)
+(def load-xdp-program xdp/load-xdp-program)
+
 ;; Macros
 (defmacro with-map
   "Create a map and ensure it's closed after use"
@@ -102,6 +110,11 @@
   "Create and manage a ring buffer consumer"
   [& args]
   `(events/with-ringbuf-consumer ~@args))
+
+(defmacro with-xdp
+  "Attach XDP program to interface and ensure detachment after use"
+  [& args]
+  `(xdp/with-xdp ~@args))
 
 ;; Initialization and system check
 
