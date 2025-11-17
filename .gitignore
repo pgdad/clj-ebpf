@@ -1,0 +1,41 @@
+# Clojure
+target/
+.cpcache/
+.nrepl-port
+.lein-*
+.repl/
+pom.xml
+pom.xml.asc
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.calva/
+.clj-kondo/
+.lsp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.jar
+*.class
+
+# Logs
+*.log
+
+# Temporary files
+*.swp
+*.swo
+*~
+.#*
+
+# BPF specific
+*.o
+*.ll
+*.bc
+
+# Testing
+.nrepl-history

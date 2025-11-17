@@ -1,0 +1,136 @@
+(ns clj-ebpf.core
+  "Main API for clj-ebpf - eBPF programming in Clojure"
+  (:require [clj-ebpf.constants :as const]
+            [clj-ebpf.syscall :as syscall]
+            [clj-ebpf.utils :as utils]
+            [clj-ebpf.maps :as maps]
+            [clj-ebpf.programs :as programs]
+            [clj-ebpf.events :as events]))
+
+;; Re-export main APIs
+
+;; Constants
+(def bpf-cmd const/bpf-cmd)
+(def map-type const/map-type)
+(def prog-type const/prog-type)
+(def attach-type const/attach-type)
+
+;; Maps
+(def create-map maps/create-map)
+(def close-map maps/close-map)
+(def map-lookup maps/map-lookup)
+(def map-update maps/map-update)
+(def map-delete maps/map-delete)
+(def map-keys maps/map-keys)
+(def map-entries maps/map-entries)
+(def map-values maps/map-values)
+(def map-count maps/map-count)
+(def map-clear maps/map-clear)
+(def pin-map maps/pin-map)
+(def get-pinned-map maps/get-pinned-map)
+(def dump-map maps/dump-map)
+
+;; Convenience map constructors
+(def create-hash-map maps/create-hash-map)
+(def create-array-map maps/create-array-map)
+(def create-ringbuf-map maps/create-ringbuf-map)
+
+;; Programs
+(def load-program programs/load-program)
+(def close-program programs/close-program)
+(def attach-kprobe programs/attach-kprobe)
+(def attach-kretprobe programs/attach-kretprobe)
+(def attach-tracepoint programs/attach-tracepoint)
+(def attach-raw-tracepoint programs/attach-raw-tracepoint)
+(def pin-program programs/pin-program)
+(def get-pinned-program programs/get-pinned-program)
+
+;; Events
+(def create-ringbuf-consumer events/create-ringbuf-consumer)
+(def start-ringbuf-consumer events/start-ringbuf-consumer)
+(def stop-ringbuf-consumer events/stop-ringbuf-consumer)
+(def process-events events/process-events)
+(def make-event-parser events/make-event-parser)
+(def make-event-serializer events/make-event-serializer)
+
+;; Utils
+(def check-bpf-available utils/check-bpf-available)
+(def get-kernel-version utils/get-kernel-version)
+(def bpf-fs-mounted? utils/bpf-fs-mounted?)
+(def ensure-bpf-fs utils/ensure-bpf-fs)
+
+;; Macros
+(defmacro with-map
+  "Create a map and ensure it's closed after use"
+  [& args]
+  `(maps/with-map ~@args))
+
+(defmacro with-program
+  "Load a program and ensure it's closed after use"
+  [& args]
+  `(programs/with-program ~@args))
+
+(defmacro with-ringbuf-consumer
+  "Create and manage a ring buffer consumer"
+  [& args]
+  `(events/with-ringbuf-consumer ~@args))
+
+;; Initialization and system check
+
+(defn init!
+  "Initialize clj-ebpf and check system compatibility"
+  []
+  (let [checks (utils/check-bpf-available)]
+    (println "clj-ebpf initialized")
+    (println "Kernel version:" (format "0x%06x" (:kernel-version checks)))
+    (println "BPF filesystem:" (if (:bpf-fs-mounted checks) "mounted" "NOT MOUNTED"))
+    (when (:bpf-fs-path checks)
+      (println "BPF FS path:" (:bpf-fs-path checks)))
+    (println "CAP_BPF:" (if (:has-cap-bpf checks) "yes" "no (may need sudo)"))
+    checks))
+
+(defn version
+  "Get clj-ebpf version"
+  []
+  "0.1.0-SNAPSHOT")
+
+;; Example helper for quick testing
+
+(defn run-example
+  "Run a simple example to verify clj-ebpf is working"
+  []
+  (println "\nRunning clj-ebpf example...")
+  (println "Creating a hash map...")
+  (with-map [test-map {:map-type :hash
+                       :key-size 4
+                       :value-size 4
+                       :max-entries 10
+                       :map-name "test_map"
+                       :key-serializer utils/int->bytes
+                       :key-deserializer utils/bytes->int
+                       :value-serializer utils/int->bytes
+                       :value-deserializer utils/bytes->int}]
+    (println "Map created with FD:" (:fd test-map))
+
+    (println "Inserting values...")
+    (map-update test-map 1 100)
+    (map-update test-map 2 200)
+    (map-update test-map 3 300)
+
+    (println "Looking up values...")
+    (println "Key 1 =" (map-lookup test-map 1))
+    (println "Key 2 =" (map-lookup test-map 2))
+    (println "Key 3 =" (map-lookup test-map 3))
+
+    (println "Iterating over all entries...")
+    (doseq [[k v] (map-entries test-map)]
+      (println "  " k "=>" v))
+
+    (println "Deleting key 2...")
+    (map-delete test-map 2)
+
+    (println "Remaining entries:")
+    (doseq [[k v] (map-entries test-map)]
+      (println "  " k "=>" v))
+
+    (println "Example completed successfully!")))
