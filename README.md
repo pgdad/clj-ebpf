@@ -44,13 +44,19 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - TC program loading (:sched-cls, :sched-act)
   - Priority-based filter management
   - Automatic resource cleanup with macros
-- ✅ **150+ tests with comprehensive assertions - all passing**
+- ✅ **Cgroup (Control Groups) attachment**
+  - BPF program attachment to cgroups (v2)
+  - Support for all cgroup program types (skb, sock, device, sysctl)
+  - Container and process-level control
+  - Cgroup FD management and utilities
+  - High-level convenience functions and macros
+- ✅ **170+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
 - ✅ **ELF object file parsing** (load compiled BPF programs from .o files)
 - ✅ **TC (Traffic Control) support** (complete)
-- ⏳ Cgroup attachment
+- ✅ **Cgroup attachment** (complete)
 - ⏳ LSM (Linux Security Modules) hooks
 - ⏳ BTF (BPF Type Format) support
 - ⏳ CO-RE (Compile Once - Run Everywhere)
@@ -421,6 +427,126 @@ TC provides flexible packet filtering and traffic shaping at the Linux kernel le
 - **Use TC** for: More complex filtering, packet modification, QoS, egress filtering
 
 **Note:** TC attachment requires `CAP_NET_ADMIN` capability. The `clsact` qdisc must be added before attaching filters, but `attach-tc-filter` does this automatically by default.
+
+### Cgroup (Control Groups)
+
+Attach BPF programs to cgroups for container and process-level control:
+
+```clojure
+(require '[clj-ebpf.cgroup :as cgroup]
+         '[clj-ebpf.programs :as programs])
+
+;; Check current process cgroup
+(cgroup/get-current-cgroup)
+;; => "/user.slice/user-1000.slice/session-3.scope"
+
+;; Check if cgroup exists
+(cgroup/cgroup-exists? "/sys/fs/cgroup")
+;; => true
+
+;; Simple cgroup SKB program (allow all incoming traffic)
+;; Returns 1 (allow)
+(def cgroup-bytecode
+  (byte-array [0xb7 0x00 0x00 0x00 0x01 0x00 0x00 0x00  ; mov r0, 1 (allow)
+               0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])) ; exit
+
+;; Load cgroup SKB program
+(def prog-fd (cgroup/load-cgroup-skb-program cgroup-bytecode :ingress
+                                            :prog-name "cgroup_ingress"
+                                            :license "GPL"))
+
+;; Attach to a cgroup (e.g., Docker container cgroup)
+(def info (cgroup/attach-cgroup-program "/sys/fs/cgroup/docker/container-id"
+                                       prog-fd
+                                       :cgroup-inet-ingress
+                                       :flags :override))
+;; => {:cgroup-path "/sys/fs/cgroup/docker/container-id"
+;;     :attach-type :cgroup-inet-ingress
+;;     :prog-fd 5}
+
+;; Later, detach the program
+(cgroup/detach-cgroup-program (:cgroup-path info)
+                             (:attach-type info)
+                             :prog-fd prog-fd)
+(syscall/close-fd prog-fd)
+
+;; Or use the convenience macro for automatic cleanup:
+(cgroup/with-cgroup-program [info (cgroup/attach-cgroup-program
+                                   "/sys/fs/cgroup"
+                                   prog-fd
+                                   :cgroup-inet-ingress)]
+  ;; Program is attached to cgroup
+  (println "Program attached to" (:cgroup-path info))
+  ;; Do work...
+  )
+;; Program automatically detached when leaving scope
+
+;; High-level convenience functions:
+(def setup (cgroup/setup-cgroup-skb "/sys/fs/cgroup/my-container"
+                                   cgroup-bytecode
+                                   :ingress
+                                   :prog-name "ingress_filter"
+                                   :flags :override))
+;; => {:prog-fd 5 :attach-info {...}}
+
+;; Process traffic...
+(Thread/sleep 5000)
+
+;; Cleanup
+(cgroup/teardown-cgroup-program setup)
+
+;; Other cgroup program types:
+
+;; Socket creation control
+(def sock-prog (cgroup/load-cgroup-sock-program bytecode
+                                               :prog-name "sock_filter"
+                                               :license "GPL"))
+(cgroup/attach-cgroup-program "/sys/fs/cgroup" sock-prog
+                             :cgroup-inet-sock-create)
+
+;; Device access control
+(def device-prog (cgroup/load-cgroup-device-program bytecode
+                                                   :prog-name "device_filter"
+                                                   :license "GPL"))
+(cgroup/attach-cgroup-program "/sys/fs/cgroup" device-prog
+                             :cgroup-device)
+
+;; Sysctl access control
+(def sysctl-prog (cgroup/load-cgroup-sysctl-program bytecode
+                                                   :prog-name "sysctl_filter"
+                                                   :license "GPL"))
+(cgroup/attach-cgroup-program "/sys/fs/cgroup" sysctl-prog
+                             :cgroup-sysctl)
+
+;; List child cgroups
+(cgroup/list-cgroup-children "/sys/fs/cgroup")
+;; => ["user.slice" "system.slice" "init.scope" ...]
+```
+
+**Cgroup Program Types:**
+- **cgroup-skb** - Network packet filtering (ingress/egress)
+- **cgroup-sock** - Socket creation, bind, connect control
+- **cgroup-device** - Device access control (character/block devices)
+- **cgroup-sysctl** - Sysctl parameter access control
+- **cgroup-sockopt** - getsockopt/setsockopt control
+
+**Common Attach Types:**
+- `:cgroup-inet-ingress` - Incoming network packets
+- `:cgroup-inet-egress` - Outgoing network packets
+- `:cgroup-inet-sock-create` - Socket creation
+- `:cgroup-device` - Device access
+- `:cgroup-sysctl` - Sysctl access
+- `:cgroup-inet4-bind` / `:cgroup-inet6-bind` - Socket bind operations
+- `:cgroup-inet4-connect` / `:cgroup-inet6-connect` - Socket connect operations
+
+**Use Cases:**
+- **Container networking**: Filter/monitor traffic per container
+- **Security policies**: Control device access, socket operations
+- **Resource isolation**: Enforce network/device policies per cgroup
+- **Multi-tenancy**: Different policies for different user groups
+- **Compliance**: Audit and control system calls per process group
+
+**Note:** Cgroup attachment requires `CAP_BPF` and `CAP_NET_ADMIN` capabilities. Cgroup v2 must be enabled (default on modern Linux systems).
 
 ### Enhanced Ring Buffer Event Processing
 

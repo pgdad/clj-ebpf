@@ -8,6 +8,7 @@
             [clj-ebpf.events :as events]
             [clj-ebpf.xdp :as xdp]
             [clj-ebpf.tc :as tc]
+            [clj-ebpf.cgroup :as cgroup]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -111,6 +112,23 @@
 (def setup-tc-egress tc/setup-tc-egress)
 (def teardown-tc-filter tc/teardown-tc-filter)
 
+;; Cgroup (Control Groups)
+(def get-cgroup-fd cgroup/get-cgroup-fd)
+(def close-cgroup cgroup/close-cgroup)
+(def cgroup-exists? cgroup/cgroup-exists?)
+(def attach-cgroup-program cgroup/attach-cgroup-program)
+(def detach-cgroup-program cgroup/detach-cgroup-program)
+(def load-cgroup-skb-program cgroup/load-cgroup-skb-program)
+(def load-cgroup-sock-program cgroup/load-cgroup-sock-program)
+(def load-cgroup-device-program cgroup/load-cgroup-device-program)
+(def load-cgroup-sysctl-program cgroup/load-cgroup-sysctl-program)
+(def setup-cgroup-skb cgroup/setup-cgroup-skb)
+(def setup-cgroup-sock cgroup/setup-cgroup-sock)
+(def setup-cgroup-device cgroup/setup-cgroup-device)
+(def teardown-cgroup-program cgroup/teardown-cgroup-program)
+(def get-current-cgroup cgroup/get-current-cgroup)
+(def list-cgroup-children cgroup/list-cgroup-children)
+
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)
 (def inspect-elf elf/inspect-elf)
@@ -152,6 +170,16 @@
   "Load TC program, attach filter, and ensure cleanup"
   [& args]
   `(tc/with-tc-program ~@args))
+
+(defmacro with-cgroup-program
+  "Attach cgroup program and ensure detachment after use"
+  [& args]
+  `(cgroup/with-cgroup-program ~@args))
+
+(defmacro with-cgroup-skb
+  "Load and attach cgroup SKB program, ensure cleanup"
+  [& args]
+  `(cgroup/with-cgroup-skb ~@args))
 
 ;; Initialization and system check
 
