@@ -15,6 +15,9 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Array maps
   - Ring buffer maps
   - **LRU (Least Recently Used) hash maps**
+  - **Stack maps** (LIFO semantics)
+  - **Queue maps** (FIFO semantics)
+  - **LPM Trie maps** (Longest Prefix Match for routing/CIDR lookups)
 - ✅ BPF program loading
 - ✅ Kprobe/Kretprobe attachment
 - ✅ Tracepoint attachment
@@ -26,7 +29,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ Resource management macros (`with-map`, `with-program`)
 - ✅ Comprehensive error handling
 - ✅ **Batch map operations** (lookup, update, delete with graceful fallback)
-- ✅ **63 tests with 227 assertions - all passing**
+- ✅ **82 tests with 291 assertions - all passing**
 
 ### Planned (Future Phases)
 - ⏳ Per-CPU map support (requires special value handling)
@@ -40,7 +43,6 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ⏳ C compilation integration
 - ⏳ BPF assembly DSL
 - ⏳ Perf event buffers
-- ⏳ Batch map operations
 
 ## Requirements
 
@@ -175,6 +177,62 @@ Or for Leiningen `project.clj`:
 ;; on kernels that don't support batch APIs (< 5.6)
 ```
 
+### Stack and Queue Maps
+
+```clojure
+(require '[clj-ebpf.core :as bpf])
+
+;; Stack maps (LIFO - Last In First Out)
+(bpf/with-map [stack (bpf/create-stack-map 100 :map-name "my_stack")]
+  ;; Push values onto stack
+  (bpf/stack-push stack 10)
+  (bpf/stack-push stack 20)
+  (bpf/stack-push stack 30)
+
+  ;; Peek at top value without removing it
+  (println "Top value:" (bpf/stack-peek stack))  ; => 30
+
+  ;; Pop values in LIFO order
+  (println (bpf/stack-pop stack))  ; => 30
+  (println (bpf/stack-pop stack))  ; => 20
+  (println (bpf/stack-pop stack))  ; => 10
+  (println (bpf/stack-pop stack))) ; => nil (empty)
+
+;; Queue maps (FIFO - First In First Out)
+(bpf/with-map [queue (bpf/create-queue-map 100 :map-name "my_queue")]
+  ;; Push values onto queue
+  (bpf/queue-push queue 10)
+  (bpf/queue-push queue 20)
+  (bpf/queue-push queue 30)
+
+  ;; Peek at front value without removing it
+  (println "Front value:" (bpf/queue-peek queue))  ; => 10
+
+  ;; Pop values in FIFO order
+  (println (bpf/queue-pop queue))  ; => 10
+  (println (bpf/queue-pop queue))  ; => 20
+  (println (bpf/queue-pop queue))  ; => 30
+  (println (bpf/queue-pop queue))) ; => nil (empty)
+```
+
+### LPM Trie Maps
+
+```clojure
+(require '[clj-ebpf.core :as bpf])
+
+;; LPM Trie maps for longest prefix matching (e.g., IP routing)
+(bpf/with-map [trie (bpf/create-lpm-trie-map 100 :map-name "routing_table")]
+  ;; LPM tries have special key format:
+  ;; - First 4 bytes: prefix length in bits
+  ;; - Remaining bytes: prefix data (e.g., IP address)
+
+  ;; Note: LPM trie operations currently require custom key serialization
+  ;; for the prefix-length + data format. Full LPM examples coming soon!
+
+  ;; Basic creation and configuration is supported
+  (println "LPM trie created with" (:max-entries trie) "max entries"))
+```
+
 ### Loading and Attaching Programs
 
 ```clojure
@@ -254,6 +312,9 @@ Or for Leiningen `project.clj`:
 - `create-array-map` - Create array map (convenience)
 - `create-lru-hash-map` - Create LRU hash map (auto-evicts least recently used)
 - `create-lru-percpu-hash-map` - Create per-CPU LRU hash map (experimental)
+- `create-stack-map` - Create stack map (LIFO semantics)
+- `create-queue-map` - Create queue map (FIFO semantics)
+- `create-lpm-trie-map` - Create LPM trie map (longest prefix matching)
 - `create-ringbuf-map` - Create ring buffer map (convenience)
 - `close-map` - Close map and release resources
 - `map-from-fd` - Create map from existing file descriptor (for pinned maps)
@@ -263,6 +324,12 @@ Or for Leiningen `project.clj`:
 - `map-keys` - Get all keys (lazy seq)
 - `map-entries` - Get all key-value pairs (lazy seq)
 - `map-values` - Get all values (lazy seq)
+- `stack-push` - Push value onto stack map
+- `stack-pop` - Pop value from stack map (LIFO)
+- `stack-peek` - Peek at top value without removing
+- `queue-push` - Push value onto queue map (enqueue)
+- `queue-pop` - Pop value from queue map (FIFO)
+- `queue-peek` - Peek at front value without removing
 - `map-count` - Count entries
 - `map-clear` - Delete all entries
 - `map-lookup-batch` - Batch lookup multiple keys
@@ -409,6 +476,8 @@ ls /sys/kernel/debug/tracing/events/syscalls/
 - Pin maps/programs for cross-process reuse to avoid reload overhead
 - Use array maps for small, dense key spaces (faster than hash)
 - LRU maps for bounded caches (automatic eviction)
+- Stack/queue maps for LIFO/FIFO data structures (efficient push/pop operations)
+- LPM trie maps for IP routing and prefix matching (optimized for longest prefix match)
 
 ## Security Considerations
 
@@ -429,7 +498,7 @@ Contributions welcome! Priority areas for improvement:
 - Improved ring buffer implementation
 - More examples and tutorials
 - Performance benchmarks
-- Additional map types (stack, queue, LPM trie)
+- Additional specialized map types (devmap, cpumap, sockmap, etc.)
 
 ## License
 

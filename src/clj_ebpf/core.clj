@@ -33,7 +33,25 @@
 ;; Convenience map constructors
 (def create-hash-map maps/create-hash-map)
 (def create-array-map maps/create-array-map)
+(def create-lru-hash-map maps/create-lru-hash-map)
+(def create-stack-map maps/create-stack-map)
+(def create-queue-map maps/create-queue-map)
+(def create-lpm-trie-map maps/create-lpm-trie-map)
 (def create-ringbuf-map maps/create-ringbuf-map)
+
+;; Stack/Queue operations
+(def stack-push maps/stack-push)
+(def stack-pop maps/stack-pop)
+(def stack-peek maps/stack-peek)
+(def queue-push maps/queue-push)
+(def queue-pop maps/queue-pop)
+(def queue-peek maps/queue-peek)
+
+;; Batch map operations
+(def map-lookup-batch maps/map-lookup-batch)
+(def map-update-batch maps/map-update-batch)
+(def map-delete-batch maps/map-delete-batch)
+(def map-lookup-and-delete-batch maps/map-lookup-and-delete-batch)
 
 ;; Programs
 (def load-program programs/load-program)

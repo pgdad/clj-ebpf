@@ -419,6 +419,104 @@
                   keys))
           (throw e))))))
 
+;; Stack and Queue map operations
+
+(defn stack-push
+  "Push a value onto a stack map
+
+  Parameters:
+  - bpf-map: Stack map instance
+  - value: Value to push
+
+  Returns nil on success, throws on error."
+  [^BpfMap bpf-map value]
+  (let [value-seg (value->segment bpf-map value)]
+    (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
+    nil))
+
+(defn stack-pop
+  "Pop a value from a stack map (LIFO)
+
+  Parameters:
+  - bpf-map: Stack map instance
+
+  Returns the popped value, or nil if stack is empty."
+  [^BpfMap bpf-map]
+  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+    (try
+      ;; Use atomic lookup-and-delete for stack/queue maps
+      (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+      (segment->value bpf-map value-seg)
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :noent (:errno-keyword (ex-data e)))
+          nil  ; Stack is empty
+          (throw e))))))
+
+(defn stack-peek
+  "Peek at the top value of a stack map without removing it
+
+  Parameters:
+  - bpf-map: Stack map instance
+
+  Returns the top value, or nil if stack is empty."
+  [^BpfMap bpf-map]
+  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+    (try
+      (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+      (segment->value bpf-map value-seg)
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :noent (:errno-keyword (ex-data e)))
+          nil  ; Stack is empty
+          (throw e))))))
+
+(defn queue-push
+  "Push a value onto a queue map (enqueue)
+
+  Parameters:
+  - bpf-map: Queue map instance
+  - value: Value to push
+
+  Returns nil on success, throws on error."
+  [^BpfMap bpf-map value]
+  (let [value-seg (value->segment bpf-map value)]
+    (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
+    nil))
+
+(defn queue-pop
+  "Pop a value from a queue map (dequeue, FIFO)
+
+  Parameters:
+  - bpf-map: Queue map instance
+
+  Returns the popped value, or nil if queue is empty."
+  [^BpfMap bpf-map]
+  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+    (try
+      ;; Use atomic lookup-and-delete for stack/queue maps
+      (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+      (segment->value bpf-map value-seg)
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :noent (:errno-keyword (ex-data e)))
+          nil  ; Queue is empty
+          (throw e))))))
+
+(defn queue-peek
+  "Peek at the front value of a queue map without removing it
+
+  Parameters:
+  - bpf-map: Queue map instance
+
+  Returns the front value, or nil if queue is empty."
+  [^BpfMap bpf-map]
+  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+    (try
+      (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+      (segment->value bpf-map value-seg)
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :noent (:errno-keyword (ex-data e)))
+          nil  ; Queue is empty
+          (throw e))))))
+
 ;; Map pinning
 
 (defn pin-map
@@ -543,6 +641,94 @@
                :key-deserializer utils/bytes->int
                :value-serializer utils/int->bytes
                :value-deserializer utils/bytes->int}))
+
+(defn create-stack-map
+  "Create a stack (LIFO) map
+
+  Stack maps provide Last-In-First-Out semantics. Values are pushed and popped
+  without explicit keys. Useful for maintaining call stacks or LIFO queues.
+
+  Parameters:
+  - max-entries: Maximum number of entries in the stack
+
+  Optional keyword arguments:
+  - :value-size - Size of value in bytes (default: 4)
+  - :map-name - Name for the map
+
+  Operations:
+  - Push: Use map-update with nil key
+  - Pop: Use special stack/queue operations (not standard map-lookup)
+  - Peek: Look at top without removing
+
+  Note: Stack maps use special operations, not standard key-value operations."
+  [max-entries & {:keys [value-size map-name]
+                  :or {value-size 4}}]
+  (create-map {:map-type :stack
+               :key-size 0  ; Stack maps don't use keys
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-queue-map
+  "Create a queue (FIFO) map
+
+  Queue maps provide First-In-First-Out semantics. Values are pushed and popped
+  without explicit keys. Useful for work queues or message passing.
+
+  Parameters:
+  - max-entries: Maximum number of entries in the queue
+
+  Optional keyword arguments:
+  - :value-size - Size of value in bytes (default: 4)
+  - :map-name - Name for the map
+
+  Operations:
+  - Push: Use map-update with nil key
+  - Pop: Use special stack/queue operations (not standard map-lookup)
+  - Peek: Look at front without removing
+
+  Note: Queue maps use special operations, not standard key-value operations."
+  [max-entries & {:keys [value-size map-name]
+                  :or {value-size 4}}]
+  (create-map {:map-type :queue
+               :key-size 0  ; Queue maps don't use keys
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-lpm-trie-map
+  "Create an LPM (Longest Prefix Match) trie map
+
+  LPM trie maps are specialized for longest prefix matching, commonly used
+  for IP routing tables and CIDR block lookups.
+
+  Parameters:
+  - max-entries: Maximum number of prefixes
+
+  Optional keyword arguments:
+  - :key-size - Size of key in bytes including prefix length (default: 8)
+                First 4 bytes are prefix length, rest is the prefix data
+  - :value-size - Size of value in bytes (default: 4)
+  - :map-name - Name for the map
+  - :map-flags - Must include BPF_F_NO_PREALLOC for LPM tries
+
+  Example key structure for IPv4:
+  - Bytes 0-3: Prefix length (32 bits)
+  - Bytes 4-7: IPv4 address (32 bits)
+
+  Note: Keys must include prefix length as first 4 bytes."
+  [max-entries & {:keys [key-size value-size map-name]
+                  :or {key-size 8 value-size 4}}]
+  (create-map {:map-type :lpm-trie
+               :key-size key-size
+               :value-size value-size
+               :max-entries max-entries
+               :map-flags 1  ; BPF_F_NO_PREALLOC required for LPM tries
+               :map-name map-name}))
 
 (defn create-ringbuf-map
   "Create a ring buffer map

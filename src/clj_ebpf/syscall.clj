@@ -357,6 +357,17 @@
         mem (map-elem-attr->segment attr)]
     (bpf-syscall :map-delete-elem mem)))
 
+(defn map-lookup-and-delete-elem
+  "Atomically lookup and delete element from BPF map.
+
+  This is required for stack and queue maps where pop operations
+  must be atomic. Regular maps can also use this for atomic
+  lookup-and-delete operations."
+  [map-fd key-seg value-seg]
+  (let [attr (->MapElemAttr map-fd key-seg value-seg 0)
+        mem (map-elem-attr->segment attr)]
+    (bpf-syscall :map-lookup-and-delete-elem mem)))
+
 (defn map-get-next-key
   "Get next key in BPF map (for iteration)"
   [map-fd key-seg next-key-seg]
