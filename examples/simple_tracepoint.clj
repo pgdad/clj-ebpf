@@ -1,23 +1,21 @@
-(ns simple-kprobe
-  "Simple kprobe example - trace sys_clone system call"
+(ns simple-tracepoint
+  "Simple tracepoint example - trace sched_switch"
   (:require [clj-ebpf.core :as bpf]
             [clj-ebpf.utils :as utils]
             [clj-ebpf.programs :as programs]
-            [clj-ebpf.maps :as maps]))
+            [clj-ebpf.syscall :as syscall]))
 
 ;; Simple BPF program that just returns 0 (does nothing but is valid)
 ;; This is the bytecode for:
-;;   r0 = 0
-;;   exit
+;;   r0 = 0  -> opcode: 0xb7 (BPF_MOV | BPF_K | BPF_ALU64), dst=0, src=0, off=0, imm=0
+;;   exit    -> opcode: 0x95 (BPF_EXIT | BPF_JMP)
 (def simple-bpf-program
-  (byte-array [0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00  ; mov r0, 0
+  (byte-array [0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00   ; r0 = 0
                0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])) ; exit
 
-(defn run-simple-kprobe
-  "Run a simple kprobe that attaches to sys_clone"
-  []
-  (println "Simple kprobe example")
-  (println "=====================\n")
+(defn run-simple-tracepoint []
+  (println "Simple tracepoint example")
+  (println "==========================\n")
 
   ;; Check BPF is available
   (println "Checking BPF availability...")
@@ -27,29 +25,29 @@
     (println "CAP_BPF:" (:has-cap-bpf checks))
     (println))
 
-  (println "Loading BPF program...")
+  (println "Loading BPF program for tracepoint...")
   (try
-    (bpf/with-program [prog {:prog-type :kprobe
+    (bpf/with-program [prog {:prog-type :raw-tracepoint
                              :insns simple-bpf-program
                              :license "GPL"
-                             :prog-name "simple_kprobe"}]
+                             :prog-name "simple_tp"}]
       (println "Program loaded successfully! FD:" (:fd prog))
       (println "Program type:" (:type prog))
       (println "Instruction count:" (:insn-count prog))
       (println)
 
-      (println "Attaching to schedule...")
-      (let [attached (programs/attach-kprobe prog {:function "schedule"})]
-        (println "Attached successfully!")
-        (println "Attachments:" (count (:attachments attached)))
+      (println "Attaching to sched:sched_switch tracepoint...")
+      (let [tp-fd (syscall/raw-tracepoint-open "sched_switch" (:fd prog))]
+        (println "Attached successfully! Tracepoint FD:" tp-fd)
         (println)
 
         (println "Press Ctrl+C to exit...")
-        (println "The kprobe is now active and will be called on every schedule()")
+        (println "The tracepoint is now active and will be called on every context switch")
         (println "(though this simple program does nothing)")
-        (Thread/sleep 10000)
+        (Thread/sleep 5000)
 
-        (println "\nDetaching and cleaning up...")))
+        (println "\nDetaching and cleaning up...")
+        (syscall/close-fd tp-fd)))
 
     (println "Done!")
 
@@ -64,8 +62,4 @@
 
 (defn -main
   [& args]
-  (run-simple-kprobe))
-
-;; Run from REPL:
-;; (require '[examples.simple-kprobe :as ex])
-;; (ex/run-simple-kprobe)
+  (run-simple-tracepoint))

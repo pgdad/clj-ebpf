@@ -479,14 +479,16 @@
     ;; Build bpf_attr for BPF_LINK_CREATE with kprobe_multi
     ;; prog_fd (offset 0)
     (.set attr-mem C_INT 0 prog-fd)
+    ;; target_fd (offset 4) - not used for kprobe_multi, set to 0
+    (.set attr-mem C_INT 4 0)
     ;; attach_type (offset 8) - BPF_TRACE_KPROBE_MULTI = 42
     (.set attr-mem C_INT 8 (const/attach-type->num :trace-kprobe-multi))
-    ;; flags (offset 12)
-    (.set attr-mem C_INT 12 (if retprobe? 1 0)) ; BPF_F_KPROBE_MULTI_RETURN = 1
+    ;; flags (offset 12) - main link flags, not kprobe_multi specific
+    (.set attr-mem C_INT 12 0)
 
     ;; kprobe_multi substruct starts at offset 16
-    ;; kprobe_multi.flags (offset 16)
-    (.set attr-mem C_INT 16 0)
+    ;; kprobe_multi.flags (offset 16) - BPF_F_KPROBE_MULTI_RETURN = 1
+    (.set attr-mem C_INT 16 (if retprobe? 1 0))
     ;; kprobe_multi.cnt (offset 20)
     (.set attr-mem C_INT 20 1)  ; attaching to 1 symbol
     ;; kprobe_multi.syms (offset 24) - address of array of string pointers
@@ -494,6 +496,15 @@
     (let [sym-ptr-array (.allocate *arena* 8 8)]  ; array of 1 pointer
       (.set sym-ptr-array C_POINTER 0 func-name-mem) ; array[0] = func_name_mem
       (.set attr-mem C_LONG 24 (.address sym-ptr-array)))  ; syms = address of array
+
+    ;; Debug logging
+    (log/info "BPF_LINK_CREATE debug:"
+              "\n  prog_fd:" prog-fd
+              "\n  attach_type:" (const/attach-type->num :trace-kprobe-multi)
+              "\n  function:" function-name
+              "\n  retprobe?:" retprobe?
+              "\n  func_name_mem addr:" (.address func-name-mem)
+              "\n  syms field value:" (.get attr-mem C_LONG 24))
 
     (let [result (int (bpf-syscall :link-create attr-mem))]
       (if (< result 0)
