@@ -70,6 +70,34 @@
     (syscall/close-fd fd)
     (log/info "Closed BPF map:" (:name bpf-map) "fd:" fd)))
 
+(defn map-from-fd
+  "Create a BpfMap record from an existing file descriptor
+   (e.g., from a pinned map retrieved with obj-get)
+
+   Required keyword arguments:
+   - :key-size - Size of key in bytes
+   - :value-size - Size of value in bytes
+   - :key-serializer - Function to serialize keys to bytes
+   - :key-deserializer - Function to deserialize bytes to keys
+   - :value-serializer - Function to serialize values to bytes
+   - :value-deserializer - Function to deserialize bytes to values
+
+   Optional keyword arguments:
+   - :map-type - Type of map (optional, for documentation)
+   - :max-entries - Maximum entries (optional, for documentation)
+
+   Note: The FD is assumed to be valid. Since the kernel doesn't provide
+   a way to query map metadata, you must provide sizes and serializers."
+  [fd & {:keys [key-size value-size map-type max-entries
+                key-serializer key-deserializer value-serializer value-deserializer]
+         :or {key-serializer identity
+              key-deserializer identity
+              value-serializer identity
+              value-deserializer identity}}]
+  (->BpfMap fd map-type key-size value-size max-entries nil nil
+            key-serializer key-deserializer
+            value-serializer value-deserializer))
+
 ;; Map operations
 
 (defn- key->segment
