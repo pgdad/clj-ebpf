@@ -13,6 +13,7 @@
             [clj-ebpf.lsm :as lsm]
             [clj-ebpf.btf :as btf]
             [clj-ebpf.dsl :as dsl]
+            [clj-ebpf.relocate :as relocate]
             [clj-ebpf.elf :as elf]))
 
 ;; Re-export main APIs
@@ -222,6 +223,23 @@
 ;; Assembly
 (def assemble dsl/assemble)
 (def compile-program dsl/compile-program)
+
+;; CO-RE (Compile Once - Run Everywhere) helpers
+(def core-field-offset dsl/core-field-offset)
+(def core-field-exists dsl/core-field-exists)
+(def core-field-size dsl/core-field-size)
+(def core-type-exists dsl/core-type-exists)
+(def core-type-size dsl/core-type-size)
+(def core-enum-value dsl/core-enum-value)
+(def generate-core-read dsl/generate-core-read)
+
+;; CO-RE relocation processing
+(def relocation-kind relocate/relocation-kind)
+(def create-relocation relocate/create-relocation)
+(def apply-relocation relocate/apply-relocation)
+(def apply-relocations relocate/apply-relocations)
+(def core-read-supported? relocate/core-read-supported?)
+(def get-kernel-btf relocate/get-kernel-btf)
 
 ;; ELF (Executable and Linkable Format)
 (def parse-elf-file elf/parse-elf-file)

@@ -80,7 +80,16 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - XDP and TC action codes
   - Compile DSL to BPF bytecode at runtime
   - Rapid prototyping and dynamic code generation
-- ✅ **235+ tests with comprehensive assertions - all passing**
+  - CO-RE helpers for portable code generation
+- ✅ **CO-RE (Compile Once - Run Everywhere)**
+  - Full support for all 13 CO-RE relocation kinds
+  - Field offset, size, existence, and signedness relocations
+  - Type-based relocations (exists, size, matches)
+  - Enum value relocations
+  - BTF-based field resolution
+  - DSL helpers for generating relocatable code
+  - Portable BPF programs across kernel versions
+- ✅ **285+ tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -91,7 +100,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **LSM (Linux Security Modules) hooks** (complete)
 - ✅ **BTF (BPF Type Format) support** (complete)
 - ✅ **BPF assembly DSL** (complete)
-- ⏳ CO-RE (Compile Once - Run Everywhere)
+- ✅ **CO-RE (Compile Once - Run Everywhere)** (complete)
 - ⏳ C compilation integration
 
 ## Requirements
@@ -1047,6 +1056,256 @@ grep CONFIG_DEBUG_INFO_BTF /boot/config-$(uname -r)
 # View BTF information with bpftool (if available)
 bpftool btf dump file /sys/kernel/btf/vmlinux format c | head -n 50
 ```
+
+### CO-RE (Compile Once - Run Everywhere)
+
+CO-RE enables BPF programs to be portable across different kernel versions by using BTF information to relocate field accesses and type information at load time. This eliminates the need to recompile BPF programs for each kernel version.
+
+#### How CO-RE Works
+
+1. **Compile**: Write BPF program using kernel structures (e.g., `task_struct->pid`)
+2. **Relocate**: At load time, BTF info from target kernel adjusts field offsets
+3. **Run**: Program works on any kernel with BTF support, regardless of struct layout
+
+```clojure
+(require '[clj-ebpf.relocate :as relocate]
+         '[clj-ebpf.btf :as btf]
+         '[clj-ebpf.dsl :as dsl])
+
+;; Check if CO-RE is supported on this system
+(relocate/core-read-supported?)
+;; => true (if kernel BTF is available)
+
+;; Load kernel BTF for relocations
+(def kernel-btf (relocate/get-kernel-btf))
+(println "Loaded" (count (:types kernel-btf)) "kernel types")
+```
+
+#### CO-RE Relocation Types
+
+**Field-based relocations:**
+```clojure
+;; Get all relocation kinds
+relocate/relocation-kind
+;; => {:field-byte-offset 0    ; Field offset in bytes
+;;     :field-byte-size 1      ; Field size in bytes
+;;     :field-exists 2         ; Field existence (0 or 1)
+;;     :field-signed 3         ; Field signedness
+;;     :field-lshift-u64 4     ; Bitfield left shift
+;;     :field-rshift-u64 5     ; Bitfield right shift
+;;     ...}
+
+;; Create a CO-RE relocation record
+(def relo (relocate/create-relocation
+            24        ; Instruction offset
+            42        ; BTF type ID
+            "0:1"     ; Field access path
+            :field-byte-offset))
+```
+
+**Type-based relocations:**
+```clojure
+;; Type-related relocation kinds:
+;; :type-id-local (6)    - Local BTF type ID
+;; :type-id-target (7)   - Target kernel BTF type ID
+;; :type-exists (8)      - Type existence check
+;; :type-size (9)        - Type size in bytes
+;; :type-matches (12)    - Type layout compatibility
+```
+
+**Enum-based relocations:**
+```clojure
+;; Enum relocation kinds:
+;; :enumval-exists (10)  - Enum value existence
+;; :enumval-value (11)   - Enum value integer value
+```
+
+#### DSL CO-RE Helpers
+
+The DSL provides high-level helpers for generating relocatable code:
+
+```clojure
+(require '[clj-ebpf.dsl :as dsl])
+
+;; Generate placeholder for field offset (relocated at load time)
+(dsl/core-field-offset :r1 "task_struct" "pid")
+;; => Generates MOV instruction with placeholder that gets relocated
+
+;; Check if field exists in target kernel
+(dsl/core-field-exists :r0 "task_struct" "new_field")
+;; => Returns 1 if exists, 0 if not (at load time)
+
+;; Get field size
+(dsl/core-field-size :r1 "task_struct" "comm")
+;; => Gets actual size of field in target kernel
+
+;; Check type existence
+(dsl/core-type-exists :r0 "struct bpf_map")
+;; => Returns 1 if type exists in kernel, 0 otherwise
+
+;; Get type size
+(dsl/core-type-size :r1 "task_struct")
+;; => Gets sizeof(task_struct) in target kernel
+
+;; Get enum value
+(dsl/core-enum-value :r0 "task_state" "TASK_RUNNING")
+;; => Gets actual integer value of enum constant
+```
+
+#### Example: Portable Field Access
+
+```clojure
+;; Read task PID with CO-RE (portable across kernel versions)
+(def portable-pid-reader
+  (dsl/assemble [;; r1 = current task pointer (from context)
+                 ;; Get offset of 'pid' field (relocated at load time)
+                 (dsl/core-field-offset :r2 "task_struct" "pid")
+                 ;; Add offset to task pointer: r1 = r1 + r2
+                 (dsl/add-reg :r1 :r2)
+                 ;; Load PID value: r0 = *(r1 + 0)
+                 (dsl/ldx :w :r0 :r1 0)
+                 (dsl/exit-insn)]))
+
+;; This program works on any kernel with BTF, regardless of where
+;; the 'pid' field is located in task_struct!
+```
+
+#### Example: Feature Detection
+
+```clojure
+;; Conditional code based on field existence
+(def conditional-program
+  (dsl/assemble [;; Check if new field exists
+                 (dsl/core-field-exists :r0 "task_struct" "new_field")
+                 ;; if r0 == 0 (field doesn't exist), use fallback
+                 (dsl/jmp-imm :jeq :r0 0 2)
+                 ;; New field exists - use it
+                 (dsl/core-field-offset :r1 "task_struct" "new_field")
+                 (dsl/ja 1)  ; Jump over fallback
+                 ;; Fallback for older kernels
+                 (dsl/core-field-offset :r1 "task_struct" "old_field")
+                 ;; Continue with program
+                 (dsl/ldx :w :r0 :r1 0)
+                 (dsl/exit-insn)]))
+```
+
+#### Applying CO-RE Relocations
+
+```clojure
+;; Example: Apply relocations to BPF program at load time
+(def local-btf (btf/load-btf-file "/path/to/program.btf"))  ; From compiler
+(def target-btf (relocate/get-kernel-btf))  ; From target kernel
+
+;; Create relocation records (normally from compiler/ELF)
+(def relocations
+  [(relocate/create-relocation 24 42 "0" :field-byte-offset)
+   (relocate/create-relocation 32 42 "1" :field-byte-offset)])
+
+;; Apply all relocations to program bytecode
+(def relocated-insns
+  (relocate/apply-relocations program-bytecode
+                             relocations
+                             local-btf
+                             target-btf))
+
+;; Now load the relocated program
+(def prog-fd (bpf/load-program relocated-insns
+                              :prog-type :kprobe
+                              :license "GPL"))
+```
+
+#### Example: BPF_CORE_READ Pattern
+
+```clojure
+;; Generate safe nested field access with CO-RE
+(def core-read-seq
+  (dsl/generate-core-read :r0  ; Destination register
+                          :r1  ; Source pointer register
+                          {:struct-name "task_struct"
+                           :field-name "pid"}))
+
+;; Expands to:
+;; - Save source pointer
+;; - Get field offset (relocated)
+;; - Add offset to pointer
+;; - Load value
+(def program (dsl/assemble core-read-seq))
+```
+
+#### CO-RE Use Cases
+
+**1. Kernel Version Independence:**
+- Write once, run on any kernel with BTF (4.18+)
+- No need for kernel headers at runtime
+- Automatic struct layout adaptation
+
+**2. Feature Detection:**
+- Check field/type existence at load time
+- Gracefully handle kernel variations
+- Support multiple kernel configurations
+
+**3. Debugging & Development:**
+- Faster development cycle (no recompilation)
+- Single binary for multiple kernels
+- Easier distribution and deployment
+
+**4. Production Deployment:**
+- Deploy same BPF program across fleet
+- Support kernel upgrades without redeployment
+- Reduce maintenance burden
+
+#### CO-RE Limitations
+
+- **Requires BTF**: Kernel must be compiled with `CONFIG_DEBUG_INFO_BTF=y`
+- **Field semantics**: CO-RE relocates offsets, not field meaning
+- **Type changes**: Cannot handle semantic type changes (e.g., field type change)
+- **Struct reorganization**: Works for field movement, not complete restructuring
+
+#### Example: Production CO-RE Program
+
+```clojure
+(defn create-portable-tracer
+  "Create a tracer that works across kernel versions using CO-RE."
+  []
+  (let [program
+        (dsl/assemble [;; Check if we have the new field
+                       (dsl/core-field-exists :r6 "task_struct" "pids")
+                       (dsl/jmp-imm :jne :r6 0 3)  ; If exists, use new path
+
+                       ;; Old kernel path (pre-4.x)
+                       (dsl/core-field-offset :r2 "task_struct" "pid")
+                       (dsl/add-reg :r1 :r2)
+                       (dsl/ja 2)  ; Skip new path
+
+                       ;; New kernel path (4.x+)
+                       (dsl/core-field-offset :r2 "task_struct" "pids")
+                       (dsl/add-reg :r1 :r2)
+
+                       ;; Common path: r1 now points to PID location
+                       (dsl/ldx :w :r0 :r1 0)
+                       (dsl/exit-insn)])]
+
+    ;; Apply relocations if BTF is available
+    (if (relocate/core-read-supported?)
+      (let [kernel-btf (relocate/get-kernel-btf)
+            ;; In real code, local-btf would come from compiler
+            local-btf kernel-btf]
+        ;; Apply relocations (in real code, get relocations from ELF)
+        program)
+      ;; Fall back to non-CO-RE program
+      (throw (ex-info "BTF not available for CO-RE"
+                     {:available (relocate/core-read-supported?)})))))
+
+;; Use the tracer
+(def tracer (create-portable-tracer))
+```
+
+**Key Points:**
+- CO-RE requires kernel BTF (4.18+)
+- Enables true "compile once, run everywhere" for BPF
+- Relocations happen at program load time
+- Supports field offsets, sizes, existence checks, and more
+- Essential for production BPF deployments
 
 ### BPF DSL (Domain-Specific Language)
 

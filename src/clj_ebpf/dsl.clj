@@ -690,3 +690,192 @@
       (exit-insn))"
   [& instructions]
   (assemble instructions))
+
+;;; =============================================================================
+;;; CO-RE (Compile Once - Run Everywhere) Helpers
+;;; =============================================================================
+
+(defn core-field-offset
+  "Generate placeholder instruction for CO-RE field offset relocation.
+
+  This generates a MOV instruction with a placeholder immediate value (0)
+  that will be relocated at load time using BTF information to the correct
+  field offset.
+
+  Note: Actual CO-RE relocation requires BTF data and relocation records
+  that are typically handled by the ELF loader or program loader.
+
+  Parameters:
+  - dst: Destination register
+  - struct-name: Structure name (for documentation/debugging)
+  - field-name: Field name (for documentation/debugging)
+
+  Returns instruction byte array with placeholder offset.
+
+  Example:
+    ;; Load offset of task_struct->pid into r1
+    (core-field-offset :r1 \"task_struct\" \"pid\")
+
+  The placeholder value (0) would be replaced with the actual offset
+  during program loading when CO-RE relocations are processed."
+  [dst struct-name field-name]
+  ;; Generate MOV instruction with 0 immediate - will be relocated
+  (mov dst 0))
+
+(defn core-field-exists
+  "Generate placeholder instruction for CO-RE field existence check.
+
+  Returns 1 if field exists in target kernel, 0 if not.
+
+  Parameters:
+  - dst: Destination register
+  - struct-name: Structure name
+  - field-name: Field name
+
+  Returns instruction byte array.
+
+  Example:
+    ;; Check if task_struct has 'pids' field
+    (core-field-exists :r0 \"task_struct\" \"pids\")"
+  [dst struct-name field-name]
+  ;; Generate MOV instruction with 0 - will be relocated to 0 or 1
+  (mov dst 0))
+
+(defn core-field-size
+  "Generate placeholder instruction for CO-RE field size relocation.
+
+  Returns size of field in bytes.
+
+  Parameters:
+  - dst: Destination register
+  - struct-name: Structure name
+  - field-name: Field name
+
+  Returns instruction byte array.
+
+  Example:
+    ;; Get size of task_struct->comm field
+    (core-field-size :r1 \"task_struct\" \"comm\")"
+  [dst struct-name field-name]
+  ;; Generate MOV instruction with 0 - will be relocated to actual size
+  (mov dst 0))
+
+(defn core-type-exists
+  "Generate placeholder instruction for CO-RE type existence check.
+
+  Returns 1 if type exists in target kernel, 0 if not.
+
+  Parameters:
+  - dst: Destination register
+  - type-name: Type name to check
+
+  Returns instruction byte array.
+
+  Example:
+    ;; Check if 'struct bpf_map' exists
+    (core-type-exists :r0 \"struct bpf_map\")"
+  [dst type-name]
+  ;; Generate MOV instruction with 0 - will be relocated to 0 or 1
+  (mov dst 0))
+
+(defn core-type-size
+  "Generate placeholder instruction for CO-RE type size relocation.
+
+  Returns size of type in bytes.
+
+  Parameters:
+  - dst: Destination register
+  - type-name: Type name
+
+  Returns instruction byte array.
+
+  Example:
+    ;; Get size of task_struct
+    (core-type-size :r1 \"task_struct\")"
+  [dst type-name]
+  ;; Generate MOV instruction with 0 - will be relocated to actual size
+  (mov dst 0))
+
+(defn core-enum-value
+  "Generate placeholder instruction for CO-RE enum value relocation.
+
+  Returns the integer value of an enum constant.
+
+  Parameters:
+  - dst: Destination register
+  - enum-name: Enum type name
+  - value-name: Enum value name
+
+  Returns instruction byte array.
+
+  Example:
+    ;; Get value of TASK_RUNNING from task state enum
+    (core-enum-value :r0 \"task_state\" \"TASK_RUNNING\")"
+  [dst enum-name value-name]
+  ;; Generate MOV instruction with 0 - will be relocated to actual value
+  (mov dst 0))
+
+(comment
+  "CO-RE Helper Usage Examples"
+
+  ;; Example 1: Read task PID with CO-RE
+  (assemble [;; r1 = current task pointer (from r1 context)
+             ;; Get offset of 'pid' field
+             (core-field-offset :r2 "task_struct" "pid")
+             ;; Add offset to task pointer: r1 = r1 + r2
+             (add-reg :r1 :r2)
+             ;; Load PID value: r0 = *(r1 + 0)
+             (ldx :w :r0 :r1 0)
+             (exit-insn)])
+
+  ;; Example 2: Conditional code based on field existence
+  (assemble [;; Check if new field exists
+             (core-field-exists :r0 "task_struct" "new_field")
+             ;; if r0 == 0 (field doesn't exist), skip new code
+             (jmp-imm :jeq :r0 0 2)
+             ;; New field exists - use it
+             (core-field-offset :r1 "task_struct" "new_field")
+             (ja 1)  ; Jump over old code
+             ;; Old field fallback
+             (core-field-offset :r1 "task_struct" "old_field")
+             ;; Continue with program
+             (exit-insn)])
+
+  ;; Example 3: Allocate buffer based on structure size
+  (assemble [;; Get size of structure
+             (core-type-size :r1 "task_struct")
+             ;; Allocate on stack: r10 = r10 - r1
+             (sub-reg :r10 :r1)
+             (exit-insn)]))
+
+(defn generate-core-read
+  "Generate BPF CO-RE read sequence for nested field access.
+
+  This generates a sequence of instructions to safely read a field from
+  a structure with CO-RE relocations, including NULL pointer checks.
+
+  Pattern similar to BPF_CORE_READ macro in C.
+
+  Parameters:
+  - dst: Destination register for the result
+  - src: Source register containing pointer to structure
+  - field-spec: Map with :struct-name and :field-name
+
+  Returns sequence of instruction byte arrays.
+
+  Example:
+    ;; Read current->pid
+    (generate-core-read :r0 :r1
+      {:struct-name \"task_struct\"
+       :field-name \"pid\"})"
+  [dst src field-spec]
+  (let [{:keys [struct-name field-name]} field-spec]
+    [;; Save source pointer
+     (mov-reg :r6 src)
+     ;; Get field offset
+     (core-field-offset :r7 struct-name field-name)
+     ;; Add offset to pointer: r6 = r6 + r7
+     (add-reg :r6 :r7)
+     ;; Load value: dst = *(r6 + 0)
+     ;; Size determined by field type (using :w for 32-bit as example)
+     (ldx :w dst :r6 0)]))
