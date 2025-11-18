@@ -233,9 +233,9 @@
 
   Returns byte array (8 bytes)"
   [opcode dst src offset imm]
-  (let [opcode (byte (bit-and opcode 0xFF))
-        regs (byte (bit-or (bit-shift-left (bit-and src 0xF) 4)
-                          (bit-and dst 0xF)))
+  (let [opcode (unchecked-byte (bit-and opcode 0xFF))
+        regs (unchecked-byte (bit-or (bit-shift-left (bit-and src 0xF) 4)
+                                     (bit-and dst 0xF)))
         offset-bytes (utils/pack-struct [[:i16 offset]])
         imm-bytes (utils/pack-struct [[:i32 imm]])]
     (byte-array (concat [opcode regs]
@@ -364,6 +364,38 @@
   [dst src]
   (alu-reg :mul dst src))
 
+(defn div
+  "Divide register by immediate (64-bit).
+
+  Example:
+    (div :r0 2)  ; r0 /= 2"
+  [dst imm]
+  (alu-imm :div dst imm))
+
+(defn div-reg
+  "Divide register by register (64-bit).
+
+  Example:
+    (div-reg :r0 :r1)  ; r0 /= r1"
+  [dst src]
+  (alu-reg :div dst src))
+
+(defn mod
+  "Modulo register by immediate (64-bit).
+
+  Example:
+    (mod :r0 10)  ; r0 %= 10"
+  [dst imm]
+  (alu-imm :mod dst imm))
+
+(defn mod-reg
+  "Modulo register by register (64-bit).
+
+  Example:
+    (mod-reg :r0 :r1)  ; r0 %= r1"
+  [dst src]
+  (alu-reg :mod dst src))
+
 (defn and-op
   "Bitwise AND with immediate (64-bit).
 
@@ -459,6 +491,36 @@
     (neg-reg :r0)  ; r0 = -r0"
   [dst]
   (alu-imm :neg dst 0))
+
+(defn end-to-be
+  "Convert register from host byte order to big-endian (network byte order).
+
+  size: Bit size - 16, 32, or 64
+
+  Example:
+    (end-to-be :r0 16)  ; r0 = htobe16(r0)
+    (end-to-be :r1 32)  ; r1 = htobe32(r1)"
+  [dst size]
+  (let [opcode (bit-or (get alu-op :end)
+                      (get instruction-class :alu))]
+    (build-instruction opcode (resolve-register dst) 0 0 size)))
+
+(defn end-to-le
+  "Convert register from host byte order to little-endian.
+
+  size: Bit size - 16, 32, or 64
+
+  Note: On x86/x86_64 (little-endian), this is essentially a no-op.
+  The instruction is provided for portability.
+
+  Example:
+    (end-to-le :r0 16)  ; r0 = htole16(r0)
+    (end-to-le :r1 32)  ; r1 = htole32(r1)"
+  [dst size]
+  (let [opcode (bit-or (get alu-op :end)
+                      (get instruction-class :alu)
+                      0x08)]  ; BPF_TO_LE flag
+    (build-instruction opcode (resolve-register dst) 0 0 size)))
 
 ;; ============================================================================
 ;; Jump Instructions
@@ -575,8 +637,8 @@
                       (get load-store-mode :imm)
                       (get instruction-class :ld))
         dst-reg (resolve-register dst)
-        imm-lo (bit-and imm64 0xFFFFFFFF)
-        imm-hi (bit-and (bit-shift-right imm64 32) 0xFFFFFFFF)
+        imm-lo (unchecked-int (bit-and imm64 0xFFFFFFFF))
+        imm-hi (unchecked-int (bit-and (unsigned-bit-shift-right imm64 32) 0xFFFFFFFF))
         insn1 (build-instruction opcode dst-reg 0 0 imm-lo)
         insn2 (build-instruction 0 0 0 0 imm-hi)]
     (byte-array (concat insn1 insn2))))

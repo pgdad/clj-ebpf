@@ -1239,6 +1239,120 @@ Access via `dsl/bpf-helpers`:
 - **Testing**: Create test programs easily
 - **Macro generation**: Build higher-level abstractions on top of DSL
 
+#### Comprehensive DSL Examples
+
+The `clj-ebpf.examples` namespace provides 25+ ready-to-use example programs demonstrating the full DSL capabilities. All examples are production-quality with detailed documentation.
+
+```clojure
+(require '[clj-ebpf.examples :as examples])
+
+;; List all available examples
+(examples/list-examples)
+
+;; Get bytecode for a specific example
+(def bytecode (examples/get-example :xdp-tcp-port-filter))
+
+;; Load and use an example
+(def prog-fd (bpf/load-program (examples/get-example :xdp-pass-all)
+                               :prog-type :xdp
+                               :license "GPL"))
+```
+
+**Available Example Categories:**
+
+**Basic XDP Examples:**
+- `:xdp-pass-all` - Pass all packets (simplest XDP program)
+- `:xdp-drop-all` - Drop all packets at driver level
+- `:xdp-packet-size-filter` - Filter packets by size (>60 bytes)
+- `:xdp-aborted-on-error` - Return XDP_ABORTED for error signaling
+
+**Packet Parsing Examples:**
+- `:xdp-ethernet-parser` - Parse and validate Ethernet headers
+- `:xdp-ethertype-filter` - Filter by EtherType (IPv4 only)
+- `:xdp-ipv4-parser` - Parse and validate IPv4 headers
+- `:xdp-ip-protocol-filter` - Filter by IP protocol (TCP only)
+
+**Port Filtering Examples:**
+- `:xdp-tcp-port-filter` - Filter HTTP traffic (port 80)
+- `:xdp-udp-port-range` - Filter UDP ports 1024-2048
+
+**BPF Map Operations:**
+- `:xdp-map-lookup` - Demonstrate map lookup pattern
+- `:xdp-map-counter` - Increment packet counters in map
+
+**Traffic Control (TC) Examples:**
+- `:tc-ok-all` - Allow all packets
+- `:tc-shot-all` - Drop all packets
+- `:tc-classifier` - Classify packets by size with different actions
+
+**Tracing and Debugging:**
+- `:kprobe-trace-printk` - Use bpf_trace_printk for debugging
+- `:kprobe-timestamp` - Log timestamps with bpf_ktime_get_ns
+
+**Arithmetic and Logic:**
+- `:arithmetic-demo` - Demonstrate ADD, SUB, MUL, DIV operations
+- `:bitwise-demo` - Demonstrate AND, OR, XOR, shift operations
+- `:conditional-demo` - Demonstrate conditional jumps and branching
+
+**Real-World Security Examples:**
+- `:syn-flood-protection` - SYN flood protection pattern
+- `:icmp-rate-limiter` - ICMP rate limiting to prevent floods
+- `:ip-allowlist` - IP allowlist filtering with map lookup
+
+**Helper Function Examples:**
+- `:perf-event-output` - Send data to userspace via perf events
+- `:get-cpu-id` - Get current CPU ID
+
+**Example: Using the TCP Port Filter**
+```clojure
+(require '[clj-ebpf.examples :as examples]
+         '[clj-ebpf.core :as bpf]
+         '[clj-ebpf.xdp :as xdp])
+
+;; Get the pre-built TCP port 80 filter
+(def http-filter (examples/get-example :xdp-tcp-port-filter))
+
+;; Load the program
+(def prog {:prog-type :xdp
+           :insns http-filter
+           :license "GPL"
+           :prog-name "http_filter"})
+
+(bpf/with-program [loaded prog]
+  (println "Loaded program, FD:" (:fd loaded))
+
+  ;; Attach to network interface
+  (xdp/with-xdp ["eth0" loaded {:mode :skb}]
+    (println "HTTP filter active on eth0")
+    (println "Only HTTP traffic (port 80) will pass")
+    (Thread/sleep 60000)))  ; Run for 60 seconds
+```
+
+**Example: IP Allowlist with Map Integration**
+```clojure
+;; Create a map to store allowed IPs
+(def allowlist-map
+  (bpf/create-hash-map 4 4 1000  ; key-size, value-size, max-entries
+                      "ip_allowlist"
+                      bpf/utils/int->bytes
+                      bpf/utils/bytes->int
+                      bpf/utils/int->bytes
+                      bpf/utils/bytes->int))
+
+;; Add some allowed IPs (in host byte order)
+(bpf/map-update allowlist-map (bit-or (bit-shift-left 192 24)
+                                     (bit-shift-left 168 16)
+                                     (bit-shift-left 1 8)
+                                     100) 1)  ; 192.168.1.100
+
+;; Get the allowlist filter program
+(def ip-filter (examples/get-example :ip-allowlist))
+
+;; Note: In a real implementation, you would need to patch the map FD
+;; into the program bytecode before loading
+;; (see ELF loading for automatic map FD patching)
+```
+
 **Note:** The DSL generates raw BPF bytecode that must pass kernel verifier checks. Complex programs may need careful register management and bounds checking.
 
 ### ELF Object File Parsing

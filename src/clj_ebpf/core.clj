@@ -187,6 +187,10 @@
 (def sub-reg dsl/sub-reg)
 (def mul dsl/mul)
 (def mul-reg dsl/mul-reg)
+(def div dsl/div)
+(def div-reg dsl/div-reg)
+(def mod dsl/mod)
+(def mod-reg dsl/mod-reg)
 (def and-op dsl/and-op)
 (def and-reg dsl/and-reg)
 (def or-op dsl/or-op)
@@ -199,6 +203,8 @@
 (def rsh-reg dsl/rsh-reg)
 (def arsh dsl/arsh)
 (def neg-reg dsl/neg-reg)
+(def end-to-be dsl/end-to-be)
+(def end-to-le dsl/end-to-le)
 
 ;; Jump operations
 (def ja dsl/ja)
