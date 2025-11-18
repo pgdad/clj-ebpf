@@ -14,7 +14,8 @@
             [clj-ebpf.btf :as btf]
             [clj-ebpf.dsl :as dsl]
             [clj-ebpf.relocate :as relocate]
-            [clj-ebpf.elf :as elf]))
+            [clj-ebpf.elf :as elf]
+            [clj-ebpf.helpers :as helpers]))
 
 ;; Re-export main APIs
 
@@ -261,6 +262,102 @@
 (def list-maps elf/list-maps)
 (def get-program elf/get-program)
 (def get-map-def elf/get-map-def)
+
+;; BPF Helper Functions
+;; Helper metadata and queries
+(def helper-metadata helpers/helper-metadata)
+(def get-helper-info helpers/get-helper-info)
+(def get-helper-id helpers/get-helper-id)
+(def helpers-by-category helpers/helpers-by-category)
+(def list-categories helpers/list-categories)
+(def available-helpers helpers/available-helpers)
+(def helper-compatible? helpers/helper-compatible?)
+(def print-helper-info helpers/print-helper-info)
+(def list-helpers helpers/list-helpers)
+
+;; Map helpers
+(def helper-map-lookup-elem dsl/helper-map-lookup-elem)
+(def helper-map-update-elem dsl/helper-map-update-elem)
+(def helper-map-delete-elem dsl/helper-map-delete-elem)
+
+;; Probe/trace helpers
+(def helper-probe-read dsl/helper-probe-read)
+(def helper-probe-read-kernel dsl/helper-probe-read-kernel)
+(def helper-probe-read-user dsl/helper-probe-read-user)
+(def helper-probe-read-str dsl/helper-probe-read-str)
+(def helper-probe-read-kernel-str dsl/helper-probe-read-kernel-str)
+(def helper-probe-read-user-str dsl/helper-probe-read-user-str)
+
+;; Time helpers
+(def helper-ktime-get-ns dsl/helper-ktime-get-ns)
+(def helper-ktime-get-boot-ns dsl/helper-ktime-get-boot-ns)
+(def helper-jiffies64 dsl/helper-jiffies64)
+(def helper-ktime-get-coarse-ns dsl/helper-ktime-get-coarse-ns)
+(def helper-ktime-get-tai-ns dsl/helper-ktime-get-tai-ns)
+
+;; Process information helpers
+(def helper-get-current-pid-tgid dsl/helper-get-current-pid-tgid)
+(def helper-get-current-uid-gid dsl/helper-get-current-uid-gid)
+(def helper-get-current-comm dsl/helper-get-current-comm)
+(def helper-get-current-task dsl/helper-get-current-task)
+(def helper-get-current-task-btf dsl/helper-get-current-task-btf)
+
+;; CPU/system information helpers
+(def helper-get-smp-processor-id dsl/helper-get-smp-processor-id)
+(def helper-get-numa-node-id dsl/helper-get-numa-node-id)
+(def helper-get-prandom-u32 dsl/helper-get-prandom-u32)
+
+;; Stack trace helpers
+(def helper-get-stackid dsl/helper-get-stackid)
+(def helper-get-stack dsl/helper-get-stack)
+(def helper-get-task-stack dsl/helper-get-task-stack)
+
+;; Perf event helpers
+(def helper-perf-event-output dsl/helper-perf-event-output)
+(def helper-perf-event-read dsl/helper-perf-event-read)
+
+;; Ring buffer helpers
+(def helper-ringbuf-output dsl/helper-ringbuf-output)
+(def helper-ringbuf-reserve dsl/helper-ringbuf-reserve)
+(def helper-ringbuf-submit dsl/helper-ringbuf-submit)
+(def helper-ringbuf-discard dsl/helper-ringbuf-discard)
+
+;; Debug helpers
+(def helper-trace-printk dsl/helper-trace-printk)
+
+;; Control flow helpers
+(def helper-tail-call dsl/helper-tail-call)
+(def helper-loop dsl/helper-loop)
+
+;; Cgroup helpers
+(def helper-get-current-cgroup-id dsl/helper-get-current-cgroup-id)
+(def helper-get-current-ancestor-cgroup-id dsl/helper-get-current-ancestor-cgroup-id)
+
+;; Synchronization helpers
+(def helper-spin-lock dsl/helper-spin-lock)
+(def helper-spin-unlock dsl/helper-spin-unlock)
+
+;; Utility helpers
+(def helper-snprintf dsl/helper-snprintf)
+(def helper-strncmp dsl/helper-strncmp)
+
+;; High-level helper patterns
+(def with-map-lookup dsl/with-map-lookup)
+(def safe-probe-read dsl/safe-probe-read)
+(def get-process-info dsl/get-process-info)
+(def time-delta dsl/time-delta)
+(def filter-by-pid dsl/filter-by-pid)
+(def filter-by-uid dsl/filter-by-uid)
+(def sample-one-in-n dsl/sample-one-in-n)
+(def trace-println dsl/trace-println)
+(def ringbuf-output-event dsl/ringbuf-output-event)
+(def with-spinlock dsl/with-spinlock)
+(def bounded-loop dsl/bounded-loop)
+(def stack-allocate dsl/stack-allocate)
+(def extract-pid dsl/extract-pid)
+(def extract-tgid dsl/extract-tgid)
+(def extract-uid dsl/extract-uid)
+(def extract-gid dsl/extract-gid)
 
 ;; Macros
 (defmacro with-map

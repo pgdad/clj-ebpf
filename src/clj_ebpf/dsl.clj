@@ -879,3 +879,1197 @@
      ;; Load value: dst = *(r6 + 0)
      ;; Size determined by field type (using :w for 32-bit as example)
      (ldx :w dst :r6 0)]))
+
+;; ============================================================================
+;; BPF Helper Function Wrappers
+;; ============================================================================
+;;
+;; These functions provide high-level wrappers around BPF helper functions.
+;; Each wrapper sets up the required registers according to the BPF calling
+;; convention and generates the helper call instruction.
+;;
+;; BPF Calling Convention:
+;; - r1-r5: Function arguments
+;; - r0: Return value
+;; - r6-r9: Callee-saved registers (preserved across calls)
+;; - r10: Read-only frame pointer
+
+;; === Map Helpers ===
+
+(defn helper-map-lookup-elem
+  "Call bpf_map_lookup_elem helper.
+
+  Look up an element in a BPF map by key.
+
+  Parameters:
+  - map-reg: Register containing map file descriptor (or direct FD value)
+  - key-reg: Register containing pointer to key
+
+  Returns pointer to value in r0, or NULL if not found.
+
+  Example:
+    (helper-map-lookup-elem :r1 :r2)
+    ;; r0 will contain pointer to value or NULL"
+  [map-reg key-reg]
+  [(mov-reg :r1 map-reg)
+   (mov-reg :r2 key-reg)
+   (call 1)])  ; bpf_map_lookup_elem = 1
+
+(defn helper-map-update-elem
+  "Call bpf_map_update_elem helper.
+
+  Update or insert an element in a BPF map.
+
+  Parameters:
+  - map-reg: Register containing map file descriptor
+  - key-reg: Register containing pointer to key
+  - value-reg: Register containing pointer to value
+  - flags-reg: Register containing flags (BPF_ANY, BPF_NOEXIST, BPF_EXIST)
+
+  Returns 0 on success, negative error code on failure.
+
+  Example:
+    (helper-map-update-elem :r1 :r2 :r3 :r4)
+    ;; r0 = 0 on success, < 0 on error"
+  [map-reg key-reg value-reg flags-reg]
+  [(mov-reg :r1 map-reg)
+   (mov-reg :r2 key-reg)
+   (mov-reg :r3 value-reg)
+   (mov-reg :r4 flags-reg)
+   (call 2)])  ; bpf_map_update_elem = 2
+
+(defn helper-map-delete-elem
+  "Call bpf_map_delete_elem helper.
+
+  Delete an element from a BPF map.
+
+  Parameters:
+  - map-reg: Register containing map file descriptor
+  - key-reg: Register containing pointer to key
+
+  Returns 0 on success, negative error code on failure.
+
+  Example:
+    (helper-map-delete-elem :r1 :r2)
+    ;; r0 = 0 on success, < 0 on error"
+  [map-reg key-reg]
+  [(mov-reg :r1 map-reg)
+   (mov-reg :r2 key-reg)
+   (call 3)])  ; bpf_map_delete_elem = 3
+
+;; === Probe/Trace Helpers ===
+
+(defn helper-probe-read
+  "Call bpf_probe_read helper.
+
+  Read memory from an unsafe pointer (kernel or user).
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing size to read
+  - src-reg: Register containing unsafe source pointer
+
+  Returns 0 on success, negative error code on failure.
+
+  Example:
+    (helper-probe-read :r1 :r2 :r3)
+    ;; Reads r2 bytes from r3 to r1"
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 4)])  ; bpf_probe_read = 4
+
+(defn helper-probe-read-kernel
+  "Call bpf_probe_read_kernel helper.
+
+  Read memory from kernel space pointer.
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing size to read
+  - src-reg: Register containing kernel pointer
+
+  Returns 0 on success, negative error code on failure.
+
+  Example:
+    (helper-probe-read-kernel :r1 :r2 :r3)"
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 113)])  ; bpf_probe_read_kernel = 113
+
+(defn helper-probe-read-user
+  "Call bpf_probe_read_user helper.
+
+  Read memory from user space pointer.
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing size to read
+  - src-reg: Register containing user pointer
+
+  Returns 0 on success, negative error code on failure.
+
+  Example:
+    (helper-probe-read-user :r1 :r2 :r3)"
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 112)])  ; bpf_probe_read_user = 112
+
+(defn helper-probe-read-str
+  "Call bpf_probe_read_str helper.
+
+  Read null-terminated string from unsafe pointer.
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing max size to read
+  - src-reg: Register containing unsafe source pointer
+
+  Returns length of string (including NULL) on success, negative on error.
+
+  Example:
+    (helper-probe-read-str :r1 :r2 :r3)"
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 45)])  ; bpf_probe_read_str = 45
+
+(defn helper-probe-read-kernel-str
+  "Call bpf_probe_read_kernel_str helper.
+
+  Read null-terminated string from kernel pointer.
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing max size to read
+  - src-reg: Register containing kernel pointer
+
+  Returns length of string (including NULL) on success, negative on error."
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 115)])  ; bpf_probe_read_kernel_str = 115
+
+(defn helper-probe-read-user-str
+  "Call bpf_probe_read_user_str helper.
+
+  Read null-terminated string from user pointer.
+
+  Parameters:
+  - dst-reg: Register containing destination buffer pointer
+  - size-reg: Register containing max size to read
+  - src-reg: Register containing user pointer
+
+  Returns length of string (including NULL) on success, negative on error."
+  [dst-reg size-reg src-reg]
+  [(mov-reg :r1 dst-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 src-reg)
+   (call 114)])  ; bpf_probe_read_user_str = 114
+
+;; === Time Helpers ===
+
+(defn helper-ktime-get-ns
+  "Call bpf_ktime_get_ns helper.
+
+  Get monotonic time in nanoseconds since system boot.
+
+  Returns nanosecond timestamp in r0.
+
+  Example:
+    (helper-ktime-get-ns)
+    ;; r0 = timestamp in nanoseconds"
+  []
+  [(call 5)])  ; bpf_ktime_get_ns = 5
+
+(defn helper-ktime-get-boot-ns
+  "Call bpf_ktime_get_boot_ns helper.
+
+  Get monotonic time in nanoseconds including suspend time.
+
+  Returns nanosecond timestamp in r0.
+
+  Example:
+    (helper-ktime-get-boot-ns)
+    ;; r0 = timestamp including suspend"
+  []
+  [(call 125)])  ; bpf_ktime_get_boot_ns = 125
+
+(defn helper-jiffies64
+  "Call bpf_jiffies64 helper.
+
+  Get current jiffies64 value.
+
+  Returns jiffies64 value in r0."
+  []
+  [(call 118)])  ; bpf_jiffies64 = 118
+
+(defn helper-ktime-get-coarse-ns
+  "Call bpf_ktime_get_coarse_ns helper.
+
+  Get coarse-grained monotonic time (faster but less precise).
+
+  Returns nanosecond timestamp in r0."
+  []
+  [(call 190)])  ; bpf_ktime_get_coarse_ns = 190
+
+(defn helper-ktime-get-tai-ns
+  "Call bpf_ktime_get_tai_ns helper.
+
+  Get TAI (International Atomic Time) in nanoseconds.
+
+  Returns TAI timestamp in r0."
+  []
+  [(call 208)])  ; bpf_ktime_get_tai_ns = 208
+
+;; === Process Information Helpers ===
+
+(defn helper-get-current-pid-tgid
+  "Call bpf_get_current_pid_tgid helper.
+
+  Get current process PID and thread group ID.
+
+  Returns u64 in r0 where:
+  - Upper 32 bits = TGID (process ID)
+  - Lower 32 bits = PID (thread ID)
+
+  Example:
+    (helper-get-current-pid-tgid)
+    ;; r0 = (tgid << 32) | pid"
+  []
+  [(call 14)])  ; bpf_get_current_pid_tgid = 14
+
+(defn helper-get-current-uid-gid
+  "Call bpf_get_current_uid_gid helper.
+
+  Get current process UID and GID.
+
+  Returns u64 in r0 where:
+  - Upper 32 bits = GID
+  - Lower 32 bits = UID
+
+  Example:
+    (helper-get-current-uid-gid)
+    ;; r0 = (gid << 32) | uid"
+  []
+  [(call 15)])  ; bpf_get_current_uid_gid = 15
+
+(defn helper-get-current-comm
+  "Call bpf_get_current_comm helper.
+
+  Get current process command name.
+
+  Parameters:
+  - buf-reg: Register containing pointer to buffer (min 16 bytes)
+  - size-reg: Register containing buffer size
+
+  Returns 0 on success, negative on error.
+
+  Example:
+    (helper-get-current-comm :r1 :r2)
+    ;; Fills buffer at r1 with command name"
+  [buf-reg size-reg]
+  [(mov-reg :r1 buf-reg)
+   (mov-reg :r2 size-reg)
+   (call 16)])  ; bpf_get_current_comm = 16
+
+(defn helper-get-current-task
+  "Call bpf_get_current_task helper.
+
+  Get pointer to current task_struct.
+
+  Returns pointer to task_struct in r0.
+
+  Example:
+    (helper-get-current-task)
+    ;; r0 = pointer to current task_struct"
+  []
+  [(call 35)])  ; bpf_get_current_task = 35
+
+(defn helper-get-current-task-btf
+  "Call bpf_get_current_task_btf helper.
+
+  Get pointer to current task_struct with BTF type info.
+
+  Returns BTF pointer to task_struct in r0."
+  []
+  [(call 188)])  ; bpf_get_current_task_btf = 188
+
+;; === CPU/System Information Helpers ===
+
+(defn helper-get-smp-processor-id
+  "Call bpf_get_smp_processor_id helper.
+
+  Get current CPU number.
+
+  Returns CPU ID in r0.
+
+  Example:
+    (helper-get-smp-processor-id)
+    ;; r0 = current CPU number"
+  []
+  [(call 8)])  ; bpf_get_smp_processor_id = 8
+
+(defn helper-get-numa-node-id
+  "Call bpf_get_numa_node_id helper.
+
+  Get current NUMA node ID.
+
+  Returns NUMA node ID in r0."
+  []
+  [(call 42)])  ; bpf_get_numa_node-id = 42
+
+(defn helper-get-prandom-u32
+  "Call bpf_get_prandom_u32 helper.
+
+  Get pseudo-random 32-bit number.
+
+  Returns random u32 in r0.
+
+  Example:
+    (helper-get-prandom-u32)
+    ;; r0 = random number"
+  []
+  [(call 7)])  ; bpf_get_prandom_u32 = 7
+
+;; === Stack Trace Helpers ===
+
+(defn helper-get-stackid
+  "Call bpf_get_stackid helper.
+
+  Get stack trace ID for current context.
+
+  Parameters:
+  - ctx-reg: Register containing context pointer
+  - map-reg: Register containing stack trace map FD
+  - flags-reg: Register containing flags
+
+  Returns stack ID in r0 (>= 0), or negative on error.
+
+  Example:
+    (helper-get-stackid :r1 :r2 :r3)"
+  [ctx-reg map-reg flags-reg]
+  [(mov-reg :r1 ctx-reg)
+   (mov-reg :r2 map-reg)
+   (mov-reg :r3 flags-reg)
+   (call 27)])  ; bpf_get_stackid = 27
+
+(defn helper-get-stack
+  "Call bpf_get_stack helper.
+
+  Get kernel or user stack trace.
+
+  Parameters:
+  - ctx-reg: Register containing context pointer
+  - buf-reg: Register containing buffer pointer
+  - size-reg: Register containing buffer size
+  - flags-reg: Register containing flags (kernel/user, skip frames, etc.)
+
+  Returns number of bytes written, or negative on error.
+
+  Example:
+    (helper-get-stack :r1 :r2 :r3 :r4)"
+  [ctx-reg buf-reg size-reg flags-reg]
+  [(mov-reg :r1 ctx-reg)
+   (mov-reg :r2 buf-reg)
+   (mov-reg :r3 size-reg)
+   (mov-reg :r4 flags-reg)
+   (call 67)])  ; bpf_get_stack = 67
+
+(defn helper-get-task-stack
+  "Call bpf_get_task_stack helper.
+
+  Get stack trace for a specific task.
+
+  Parameters:
+  - task-reg: Register containing task_struct pointer
+  - buf-reg: Register containing buffer pointer
+  - size-reg: Register containing buffer size
+  - flags-reg: Register containing flags
+
+  Returns number of bytes written, or negative on error."
+  [task-reg buf-reg size-reg flags-reg]
+  [(mov-reg :r1 task-reg)
+   (mov-reg :r2 buf-reg)
+   (mov-reg :r3 size-reg)
+   (mov-reg :r4 flags-reg)
+   (call 141)])  ; bpf_get_task_stack = 141
+
+;; === Perf Event Helpers ===
+
+(defn helper-perf-event-output
+  "Call bpf_perf_event_output helper.
+
+  Write data to perf event buffer.
+
+  Parameters:
+  - ctx-reg: Register containing context pointer
+  - map-reg: Register containing perf event map FD
+  - flags-reg: Register containing flags (usually CPU number)
+  - data-reg: Register containing data pointer
+  - size-reg: Register containing data size
+
+  Returns 0 on success, negative on error.
+
+  Example:
+    (helper-perf-event-output :r1 :r2 :r3 :r4 :r5)"
+  [ctx-reg map-reg flags-reg data-reg size-reg]
+  [(mov-reg :r1 ctx-reg)
+   (mov-reg :r2 map-reg)
+   (mov-reg :r3 flags-reg)
+   (mov-reg :r4 data-reg)
+   (mov-reg :r5 size-reg)
+   (call 25)])  ; bpf_perf_event_output = 25
+
+(defn helper-perf-event-read
+  "Call bpf_perf_event_read helper.
+
+  Read perf event counter value.
+
+  Parameters:
+  - map-reg: Register containing perf event array map FD
+  - flags-reg: Register containing flags/index
+
+  Returns counter value in r0.
+
+  Example:
+    (helper-perf-event-read :r1 :r2)"
+  [map-reg flags-reg]
+  [(mov-reg :r1 map-reg)
+   (mov-reg :r2 flags-reg)
+   (call 22)])  ; bpf_perf_event_read = 22
+
+;; === Ring Buffer Helpers ===
+
+(defn helper-ringbuf-output
+  "Call bpf_ringbuf_output helper.
+
+  Write data to ring buffer (simplified interface).
+
+  Parameters:
+  - ringbuf-reg: Register containing ring buffer map FD
+  - data-reg: Register containing data pointer
+  - size-reg: Register containing data size
+  - flags-reg: Register containing flags
+
+  Returns 0 on success, negative on error.
+
+  Example:
+    (helper-ringbuf-output :r1 :r2 :r3 :r4)"
+  [ringbuf-reg data-reg size-reg flags-reg]
+  [(mov-reg :r1 ringbuf-reg)
+   (mov-reg :r2 data-reg)
+   (mov-reg :r3 size-reg)
+   (mov-reg :r4 flags-reg)
+   (call 130)])  ; bpf_ringbuf_output = 130
+
+(defn helper-ringbuf-reserve
+  "Call bpf_ringbuf_reserve helper.
+
+  Reserve space in ring buffer for writing.
+
+  Parameters:
+  - ringbuf-reg: Register containing ring buffer map FD
+  - size-reg: Register containing size to reserve
+  - flags-reg: Register containing flags
+
+  Returns pointer to reserved space in r0, or NULL on failure.
+
+  Example:
+    (helper-ringbuf-reserve :r1 :r2 :r3)
+    ;; r0 = pointer to reserved space or NULL"
+  [ringbuf-reg size-reg flags-reg]
+  [(mov-reg :r1 ringbuf-reg)
+   (mov-reg :r2 size-reg)
+   (mov-reg :r3 flags-reg)
+   (call 131)])  ; bpf_ringbuf_reserve = 131
+
+(defn helper-ringbuf-submit
+  "Call bpf_ringbuf_submit helper.
+
+  Submit reserved ring buffer data.
+
+  Parameters:
+  - data-reg: Register containing pointer from bpf_ringbuf_reserve
+  - flags-reg: Register containing flags
+
+  No return value (void).
+
+  Example:
+    (helper-ringbuf-submit :r1 :r2)"
+  [data-reg flags-reg]
+  [(mov-reg :r1 data-reg)
+   (mov-reg :r2 flags-reg)
+   (call 132)])  ; bpf_ringbuf_submit = 132
+
+(defn helper-ringbuf-discard
+  "Call bpf_ringbuf_discard helper.
+
+  Discard reserved ring buffer space without submitting.
+
+  Parameters:
+  - data-reg: Register containing pointer from bpf_ringbuf_reserve
+  - flags-reg: Register containing flags
+
+  No return value (void).
+
+  Example:
+    (helper-ringbuf-discard :r1 :r2)"
+  [data-reg flags-reg]
+  [(mov-reg :r1 data-reg)
+   (mov-reg :r2 flags-reg)
+   (call 133)])  ; bpf_ringbuf_discard = 133
+
+;; === Debug Helpers ===
+
+(defn helper-trace-printk
+  "Call bpf_trace_printk helper.
+
+  Print debug message to trace pipe (/sys/kernel/debug/tracing/trace_pipe).
+  WARNING: Use only for debugging! Has performance overhead.
+
+  Parameters:
+  - fmt-reg: Register containing format string pointer
+  - fmt-size-reg: Register containing format string size
+  - arg1-reg: Register containing first argument (optional)
+  - arg2-reg: Register containing second argument (optional)
+  - arg3-reg: Register containing third argument (optional)
+
+  Returns number of bytes written, or negative on error.
+
+  Example:
+    (helper-trace-printk :r1 :r2 :r3 :r4 :r5)"
+  ([fmt-reg fmt-size-reg]
+   [(mov-reg :r1 fmt-reg)
+    (mov-reg :r2 fmt-size-reg)
+    (call 6)])  ; bpf_trace_printk = 6
+  ([fmt-reg fmt-size-reg arg1-reg]
+   [(mov-reg :r1 fmt-reg)
+    (mov-reg :r2 fmt-size-reg)
+    (mov-reg :r3 arg1-reg)
+    (call 6)])
+  ([fmt-reg fmt-size-reg arg1-reg arg2-reg]
+   [(mov-reg :r1 fmt-reg)
+    (mov-reg :r2 fmt-size-reg)
+    (mov-reg :r3 arg1-reg)
+    (mov-reg :r4 arg2-reg)
+    (call 6)])
+  ([fmt-reg fmt-size-reg arg1-reg arg2-reg arg3-reg]
+   [(mov-reg :r1 fmt-reg)
+    (mov-reg :r2 fmt-size-reg)
+    (mov-reg :r3 arg1-reg)
+    (mov-reg :r4 arg2-reg)
+    (mov-reg :r5 arg3-reg)
+    (call 6)]))
+
+;; === Control Flow Helpers ===
+
+(defn helper-tail-call
+  "Call bpf_tail_call helper.
+
+  Tail call to another BPF program. Never returns on success.
+
+  Parameters:
+  - ctx-reg: Register containing context pointer
+  - prog-array-reg: Register containing program array map FD
+  - index-reg: Register containing program index
+
+  Never returns on success. Falls through on failure.
+
+  Example:
+    (helper-tail-call :r1 :r2 :r3)
+    ;; Program continues here only if tail call failed"
+  [ctx-reg prog-array-reg index-reg]
+  [(mov-reg :r1 ctx-reg)
+   (mov-reg :r2 prog-array-reg)
+   (mov-reg :r3 index-reg)
+   (call 12)])  ; bpf_tail_call = 12
+
+(defn helper-loop
+  "Call bpf_loop helper.
+
+  Execute callback function in a bounded loop (up to nr-loops iterations).
+
+  Parameters:
+  - nr-loops-reg: Register containing number of iterations
+  - callback-fn-reg: Register containing callback function pointer
+  - callback-ctx-reg: Register containing callback context pointer
+  - flags-reg: Register containing flags
+
+  Returns number of iterations completed.
+
+  Example:
+    (helper-loop :r1 :r2 :r3 :r4)"
+  [nr-loops-reg callback-fn-reg callback-ctx-reg flags-reg]
+  [(mov-reg :r1 nr-loops-reg)
+   (mov-reg :r2 callback-fn-reg)
+   (mov-reg :r3 callback-ctx-reg)
+   (mov-reg :r4 flags-reg)
+   (call 168)])  ; bpf_loop = 168
+
+;; === Cgroup Helpers ===
+
+(defn helper-get-current-cgroup-id
+  "Call bpf_get_current_cgroup_id helper.
+
+  Get current cgroup ID.
+
+  Returns cgroup ID in r0.
+
+  Example:
+    (helper-get-current-cgroup-id)
+    ;; r0 = current cgroup ID"
+  []
+  [(call 80)])  ; bpf_get_current_cgroup_id = 80
+
+(defn helper-get-current-ancestor-cgroup-id
+  "Call bpf_get_current_ancestor_cgroup_id helper.
+
+  Get ancestor cgroup ID at specified level.
+
+  Parameters:
+  - ancestor-level-reg: Register containing ancestor level
+
+  Returns ancestor cgroup ID in r0.
+
+  Example:
+    (helper-get-current-ancestor-cgroup-id :r1)"
+  [ancestor-level-reg]
+  [(mov-reg :r1 ancestor-level-reg)
+   (call 123)])  ; bpf_get_current_ancestor_cgroup_id = 123
+
+;; === Synchronization Helpers ===
+
+(defn helper-spin-lock
+  "Call bpf_spin_lock helper.
+
+  Acquire a spinlock.
+
+  Parameters:
+  - lock-reg: Register containing pointer to bpf_spin_lock
+
+  No return value (void).
+
+  Example:
+    (helper-spin-lock :r1)"
+  [lock-reg]
+  [(mov-reg :r1 lock-reg)
+   (call 93)])  ; bpf_spin_lock = 93
+
+(defn helper-spin-unlock
+  "Call bpf_spin_unlock helper.
+
+  Release a spinlock.
+
+  Parameters:
+  - lock-reg: Register containing pointer to bpf_spin_lock
+
+  No return value (void).
+
+  Example:
+    (helper-spin-unlock :r1)"
+  [lock-reg]
+  [(mov-reg :r1 lock-reg)
+   (call 94)])  ; bpf_spin_unlock = 94
+
+;; === Utility Helpers ===
+
+(defn helper-snprintf
+  "Call bpf_snprintf helper.
+
+  Format string to buffer (printf-style).
+
+  Parameters:
+  - str-reg: Register containing destination buffer pointer
+  - str-size-reg: Register containing buffer size
+  - fmt-reg: Register containing format string pointer
+  - data-reg: Register containing data pointer
+  - data-len-reg: Register containing data length
+
+  Returns number of bytes written (excluding null terminator).
+
+  Example:
+    (helper-snprintf :r1 :r2 :r3 :r4 :r5)"
+  [str-reg str-size-reg fmt-reg data-reg data-len-reg]
+  [(mov-reg :r1 str-reg)
+   (mov-reg :r2 str-size-reg)
+   (mov-reg :r3 fmt-reg)
+   (mov-reg :r4 data-reg)
+   (mov-reg :r5 data-len-reg)
+   (call 152)])  ; bpf_snprintf = 152
+
+(defn helper-strncmp
+  "Call bpf_strncmp helper.
+
+  Compare two strings.
+
+  Parameters:
+  - s1-reg: Register containing first string pointer
+  - s1-len-reg: Register containing first string length
+  - s2-reg: Register containing second string pointer
+
+  Returns 0 if equal, < 0 if s1 < s2, > 0 if s1 > s2.
+
+  Example:
+    (helper-strncmp :r1 :r2 :r3)"
+  [s1-reg s1-len-reg s2-reg]
+  [(mov-reg :r1 s1-reg)
+   (mov-reg :r2 s1-len-reg)
+   (mov-reg :r3 s2-reg)
+   (call 169)])  ; bpf_strncmp = 169
+
+;; ============================================================================
+;; High-Level Helper Patterns and Macros
+;; ============================================================================
+;;
+;; These functions provide common patterns and idioms for using BPF helpers.
+
+(defn with-map-lookup
+  "Generate map lookup with NULL check pattern.
+
+  Looks up a map element and jumps to the specified offset if NULL.
+
+  Parameters:
+  - map-reg: Register containing map FD
+  - key-reg: Register containing key pointer
+  - null-jump-offset: Jump offset if lookup returns NULL
+  - result-reg: Register to store the result (default :r0)
+
+  Returns instruction sequence. Result pointer is in result-reg.
+
+  Example:
+    (with-map-lookup :r1 :r2 5 :r6)
+    ;; r6 = map_lookup(r1, r2)
+    ;; if (r6 == NULL) jump forward 5 instructions"
+  ([map-reg key-reg null-jump-offset]
+   (with-map-lookup map-reg key-reg null-jump-offset :r0))
+  ([map-reg key-reg null-jump-offset result-reg]
+   (vec (concat
+         (helper-map-lookup-elem map-reg key-reg)
+         [(mov-reg result-reg :r0)  ; Save result
+          (jmp-imm :jeq result-reg 0 null-jump-offset)]))))  ; Jump if NULL
+
+(defn safe-probe-read
+  "Generate safe probe read with error checking.
+
+  Reads from unsafe pointer and checks for errors.
+
+  Parameters:
+  - dst-reg: Destination buffer register
+  - size: Size to read (immediate value)
+  - src-reg: Source pointer register
+  - error-jump-offset: Jump offset on error
+
+  Returns instruction sequence.
+
+  Example:
+    (safe-probe-read :r1 4 :r2 10)
+    ;; Reads 4 bytes from r2 to r1
+    ;; Jumps forward 10 instructions on error"
+  [dst-reg size src-reg error-jump-offset]
+  (vec (concat
+        [(mov dst-reg 0)]  ; Clear destination
+        [(mov :r7 size)]   ; Size in r7
+        (helper-probe-read-kernel dst-reg :r7 src-reg)
+        ;; r0 = 0 on success, < 0 on error
+        [(jmp-imm :jslt :r0 0 error-jump-offset)])))  ; Jump if error
+
+(defn get-process-info
+  "Generate code to collect full process information.
+
+  Collects PID, TGID, UID, GID, and command name.
+
+  Parameters:
+  - pid-tgid-reg: Register to store combined PID/TGID (default :r6)
+  - uid-gid-reg: Register to store combined UID/GID (default :r7)
+  - comm-buf-reg: Register containing comm buffer pointer (optional)
+  - comm-size: Size of comm buffer (default 16)
+
+  Returns instruction sequence.
+
+  Example:
+    (get-process-info :r6 :r7 :r8)
+    ;; r6 = (tgid << 32) | pid
+    ;; r7 = (gid << 32) | uid
+    ;; buffer at r8 = comm"
+  ([pid-tgid-reg uid-gid-reg]
+   (vec (concat
+         (helper-get-current-pid-tgid)
+         [(mov-reg pid-tgid-reg :r0)]
+         (helper-get-current-uid-gid)
+         [(mov-reg uid-gid-reg :r0)])))
+  ([pid-tgid-reg uid-gid-reg comm-buf-reg]
+   (get-process-info pid-tgid-reg uid-gid-reg comm-buf-reg 16))
+  ([pid-tgid-reg uid-gid-reg comm-buf-reg comm-size]
+   (vec (concat
+         (helper-get-current-pid-tgid)
+         [(mov-reg pid-tgid-reg :r0)]
+         (helper-get-current-uid-gid)
+         [(mov-reg uid-gid-reg :r0)]
+         [(mov :r7 comm-size)]
+         (helper-get-current-comm comm-buf-reg :r7)))))
+
+(defn time-delta
+  "Generate code to measure time delta between two points.
+
+  Uses ktime-get-ns to measure elapsed time.
+
+  Parameters:
+  - start-time-reg: Register to store start time
+  - delta-reg: Register to store time delta (optional, default :r0)
+
+  Returns two instruction sequences:
+  1. Start: Get start time
+  2. End: Calculate delta
+
+  Example:
+    (let [[start end] (time-delta :r6 :r7)]
+      (concat
+        start
+        ;; ... code to measure ...
+        end))
+    ;; r6 = start time
+    ;; r7 = end time - start time"
+  ([start-time-reg]
+   (time-delta start-time-reg :r0))
+  ([start-time-reg delta-reg]
+   [(vec (concat
+          (helper-ktime-get-ns)
+          [(mov-reg start-time-reg :r0)]))  ; Start
+    (vec (concat
+          (helper-ktime-get-ns)
+          [(sub-reg :r0 start-time-reg)  ; delta = now - start
+           (mov-reg delta-reg :r0)]))]))  ; End
+
+(defn filter-by-pid
+  "Generate code to filter by process ID.
+
+  Only continues if PID matches, otherwise jumps to offset.
+
+  Parameters:
+  - target-pid: PID to match (immediate value)
+  - skip-jump-offset: Jump offset if PID doesn't match
+
+  Returns instruction sequence.
+
+  Example:
+    (filter-by-pid 1234 20)
+    ;; Jumps forward 20 instructions if current PID != 1234"
+  [target-pid skip-jump-offset]
+  (vec (concat
+        (helper-get-current-pid-tgid)
+        ;; Extract PID from lower 32 bits
+        [(and-op :r0 0xFFFFFFFF)]  ; Mask to get PID
+        [(jmp-imm :jne :r0 target-pid skip-jump-offset)])))
+
+(defn filter-by-uid
+  "Generate code to filter by user ID.
+
+  Only continues if UID matches, otherwise jumps to offset.
+
+  Parameters:
+  - target-uid: UID to match (immediate value)
+  - skip-jump-offset: Jump offset if UID doesn't match
+
+  Returns instruction sequence.
+
+  Example:
+    (filter-by-uid 1000 20)
+    ;; Jumps forward 20 instructions if current UID != 1000"
+  [target-uid skip-jump-offset]
+  (vec (concat
+        (helper-get-current-uid-gid)
+        ;; Extract UID from lower 32 bits
+        [(and-op :r0 0xFFFFFFFF)]  ; Mask to get UID
+        [(jmp-imm :jne :r0 target-uid skip-jump-offset)])))
+
+(defn sample-one-in-n
+  "Generate code to sample 1 in N events.
+
+  Uses random number generation for probabilistic sampling.
+
+  Parameters:
+  - n: Sample rate (keep 1 in N events)
+  - skip-jump-offset: Jump offset if event should be dropped
+
+  Returns instruction sequence.
+
+  Example:
+    (sample-one-in-n 100 20)
+    ;; Drops ~99% of events, keeps ~1%"
+  [n skip-jump-offset]
+  (vec (concat
+        (helper-get-prandom-u32)
+        [(mod :r0 n)]  ; r0 = random % n
+        [(jmp-imm :jne :r0 0 skip-jump-offset)])))  ; Skip if not 0
+
+(defn trace-println
+  "Generate code for simple trace printing (debug only).
+
+  Simplified interface for bpf_trace_printk with a string message.
+
+  Parameters:
+  - msg-reg: Register containing format string pointer
+  - msg-len: Length of format string
+  - arg-regs: Optional argument registers (up to 3)
+
+  Returns instruction sequence.
+
+  WARNING: Use only for debugging!
+
+  Example:
+    (trace-println :r1 14)  ; Just format string
+    (trace-println :r1 14 :r2 :r3)  ; With arguments"
+  ([msg-reg msg-len]
+   [(mov :r7 msg-len)
+    (flatten (helper-trace-printk msg-reg :r7))])
+  ([msg-reg msg-len arg1]
+   [(mov :r7 msg-len)
+    (flatten (helper-trace-printk msg-reg :r7 arg1))])
+  ([msg-reg msg-len arg1 arg2]
+   [(mov :r7 msg-len)
+    (flatten (helper-trace-printk msg-reg :r7 arg1 arg2))])
+  ([msg-reg msg-len arg1 arg2 arg3]
+   [(mov :r7 msg-len)
+    (flatten (helper-trace-printk msg-reg :r7 arg1 arg2 arg3))]))
+
+(defn ringbuf-output-event
+  "Generate code to output an event to ring buffer with error handling.
+
+  Combines helper call with error checking.
+
+  Parameters:
+  - ringbuf-map-reg: Register with ring buffer map FD
+  - event-ptr-reg: Register with event data pointer
+  - event-size: Size of event data (immediate or register)
+  - error-jump-offset: Jump offset on error (optional)
+
+  Returns instruction sequence.
+
+  Example:
+    (ringbuf-output-event :r1 :r2 64 10)
+    ;; Output 64 bytes from r2 to ringbuf r1
+    ;; Jump forward 10 instructions on error"
+  ([ringbuf-map-reg event-ptr-reg event-size]
+   (vec (concat
+         (if (keyword? event-size)
+           (helper-ringbuf-output ringbuf-map-reg event-ptr-reg event-size :r0)
+           [(mov :r8 event-size)
+            (flatten (helper-ringbuf-output ringbuf-map-reg event-ptr-reg :r8 :r0))]))))
+  ([ringbuf-map-reg event-ptr-reg event-size error-jump-offset]
+   (vec (concat
+         (ringbuf-output-event ringbuf-map-reg event-ptr-reg event-size)
+         ;; r0 = 0 on success, < 0 on error
+         [(jmp-imm :jslt :r0 0 error-jump-offset)]))))
+
+(defn with-spinlock
+  "Generate code to execute a critical section with spinlock protection.
+
+  Acquires lock, executes code, and releases lock.
+
+  Parameters:
+  - lock-ptr-reg: Register containing pointer to bpf_spin_lock
+  - body-insns: Instruction sequence to execute while holding lock
+
+  Returns instruction sequence.
+
+  Example:
+    (with-spinlock :r1 [(mov :r0 42) (exit-insn)])
+    ;; Acquires lock, sets r0=42, releases lock, exits"
+  [lock-ptr-reg body-insns]
+  (vec (concat
+        (helper-spin-lock lock-ptr-reg)
+        body-insns
+        (helper-spin-unlock lock-ptr-reg))))
+
+(defn bounded-loop
+  "Generate code for a bounded loop using bpf_loop helper.
+
+  Executes callback function up to N times.
+
+  Parameters:
+  - iterations: Number of iterations (immediate or register)
+  - callback-fn-reg: Register containing callback function pointer
+  - callback-ctx-reg: Register containing callback context (optional)
+
+  Returns instruction sequence.
+
+  Example:
+    (bounded-loop 10 :r1 :r2)
+    ;; Calls function at r1 up to 10 times with ctx r2"
+  ([iterations callback-fn-reg]
+   (bounded-loop iterations callback-fn-reg :r0))
+  ([iterations callback-fn-reg callback-ctx-reg]
+   (vec (if (keyword? iterations)
+          (helper-loop iterations callback-fn-reg callback-ctx-reg :r0)
+          (concat
+           [(mov :r8 iterations)]
+           (helper-loop :r8 callback-fn-reg callback-ctx-reg :r0))))))
+
+(defn stack-allocate
+  "Generate code to allocate space on the BPF stack.
+
+  Adjusts r10 (frame pointer) to create stack space.
+
+  Parameters:
+  - size: Number of bytes to allocate
+  - ptr-reg: Register to receive pointer to allocated space
+
+  Returns instruction sequence.
+
+  Example:
+    (stack-allocate 64 :r1)
+    ;; r1 = pointer to 64 bytes on stack"
+  [size ptr-reg]
+  [(mov-reg ptr-reg :r10)  ; ptr = frame pointer
+   (add ptr-reg (- size))  ; ptr -= size (move down stack)
+   ])
+
+(defn extract-pid
+  "Extract PID from combined PID/TGID value.
+
+  Parameters:
+  - pid-tgid-reg: Register containing combined value
+  - pid-reg: Register to receive PID
+
+  Returns instruction sequence.
+
+  Example:
+    (extract-pid :r0 :r1)
+    ;; r1 = r0 & 0xFFFFFFFF"
+  [pid-tgid-reg pid-reg]
+  [(mov-reg pid-reg pid-tgid-reg)
+   (and-op pid-reg 0xFFFFFFFF)])
+
+(defn extract-tgid
+  "Extract TGID from combined PID/TGID value.
+
+  Parameters:
+  - pid-tgid-reg: Register containing combined value
+  - tgid-reg: Register to receive TGID
+
+  Returns instruction sequence.
+
+  Example:
+    (extract-tgid :r0 :r1)
+    ;; r1 = r0 >> 32"
+  [pid-tgid-reg tgid-reg]
+  [(mov-reg tgid-reg pid-tgid-reg)
+   (rsh tgid-reg 32)])
+
+(defn extract-uid
+  "Extract UID from combined UID/GID value.
+
+  Parameters:
+  - uid-gid-reg: Register containing combined value
+  - uid-reg: Register to receive UID
+
+  Returns instruction sequence.
+
+  Example:
+    (extract-uid :r0 :r1)
+    ;; r1 = r0 & 0xFFFFFFFF"
+  [uid-gid-reg uid-reg]
+  [(mov-reg uid-reg uid-gid-reg)
+   (and-op uid-reg 0xFFFFFFFF)])
+
+(defn extract-gid
+  "Extract GID from combined UID/GID value.
+
+  Parameters:
+  - uid-gid-reg: Register containing combined value
+  - gid-reg: Register to receive GID
+
+  Returns instruction sequence.
+
+  Example:
+    (extract-gid :r0 :r1)
+    ;; r1 = r0 >> 32"
+  [uid-gid-reg gid-reg]
+  [(mov-reg gid-reg uid-gid-reg)
+   (rsh gid-reg 32)])
+
+(comment
+  "Helper Pattern Usage Examples"
+
+  ;; Example 1: Map lookup with NULL check
+  (assemble
+   (vec (concat
+         ;; Setup map FD and key pointer in r1, r2
+         (mov :r1 3)  ; map FD
+         (mov-reg :r2 :r10)  ; key pointer
+         ;; Lookup with NULL check
+         (with-map-lookup :r1 :r2 5 :r6)
+         ;; r6 now contains value pointer or NULL
+         ;; If NULL, jumped forward 5 instructions
+         ;; Use the value
+         (ldx :w :r0 :r6 0)
+         [(exit-insn)]
+         ;; NULL handler (5 instructions forward)
+         [(mov :r0 -1)
+          (exit-insn)])))
+
+  ;; Example 2: Process filtering and info collection
+  (assemble
+   (vec (concat
+         ;; Filter by UID 1000
+         (filter-by-uid 1000 10)
+         ;; Collect process info
+         (get-process-info :r6 :r7)
+         ;; r6 = pid/tgid, r7 = uid/gid
+         [(exit-insn)])))
+
+  ;; Example 3: Time measurement
+  (let [[start end] (time-delta :r6 :r7)]
+    (assemble
+     (vec (concat
+           start  ; Start timer
+           ;; Do some work...
+           (helper-get-current-pid-tgid)
+           end    ; Calculate delta
+           ;; r7 now contains elapsed nanoseconds
+           [(exit-insn)]))))
+
+  ;; Example 4: Probabilistic sampling
+  (assemble
+   (vec (concat
+         ;; Sample 1 in 100 events
+         (sample-one-in-n 100 10)
+         ;; Only ~1% of events reach here
+         (helper-get-current-pid-tgid)
+         [(exit-insn)]
+         ;; Dropped events skip to here
+         )))
+
+  ;; Example 5: Safe probe read with error handling
+  (assemble
+   (vec (concat
+         ;; r1 = destination buffer
+         ;; r2 = source pointer
+         (safe-probe-read :r1 8 :r2 5)
+         ;; Read succeeded, use data
+         [(mov :r0 0)
+          (exit-insn)]
+         ;; Error handler (5 instructions forward)
+         [(mov :r0 -1)
+          (exit-insn)])))
+
+  ;; Example 6: Ring buffer event output
+  (assemble
+   (vec (concat
+         ;; r1 = ringbuf map FD
+         ;; r2 = event data pointer
+         (ringbuf-output-event :r1 :r2 64 5)
+         ;; Success
+         [(mov :r0 0)
+          (exit-insn)]
+         ;; Error handler
+         [(mov :r0 -1)
+          (exit-insn)]))))
