@@ -411,3 +411,134 @@
         (f))
       (finally
         (.close arena)))))
+
+;;; =============================================================================
+;;; Architecture Detection
+;;; =============================================================================
+
+(defn get-arch
+  "Get the current system architecture.
+
+  Returns one of:
+  - :amd64 (x86_64)
+  - :arm64 (aarch64)
+  - :arm32 (armv7l, armv6l)
+  - :unknown
+
+  Example:
+    (get-arch)  ; => :amd64 or :arm64"
+  []
+  (let [arch-str (System/getProperty "os.arch")]
+    (cond
+      (or (= arch-str "amd64") (= arch-str "x86_64"))
+      :amd64
+
+      (or (= arch-str "aarch64") (= arch-str "arm64"))
+      :arm64
+
+      (or (= arch-str "arm") (.startsWith arch-str "armv7") (.startsWith arch-str "armv6"))
+      :arm32
+
+      :else
+      :unknown)))
+
+(defn arch-name
+  "Get human-readable architecture name.
+
+  Example:
+    (arch-name)  ; => \"AMD64\" or \"ARM64\""
+  []
+  (case (get-arch)
+    :amd64 "AMD64"
+    :arm64 "ARM64"
+    :arm32 "ARM32"
+    "Unknown"))
+
+(defn amd64?
+  "Check if running on AMD64/x86_64 architecture."
+  []
+  (= :amd64 (get-arch)))
+
+(defn arm64?
+  "Check if running on ARM64/aarch64 architecture."
+  []
+  (= :arm64 (get-arch)))
+
+(defn arm32?
+  "Check if running on 32-bit ARM architecture."
+  []
+  (= :arm32 (get-arch)))
+
+(defn pointer-size
+  "Get pointer size for current architecture in bytes.
+
+  Returns:
+  - 8 for 64-bit architectures (AMD64, ARM64)
+  - 4 for 32-bit architectures (ARM32)
+
+  Example:
+    (pointer-size)  ; => 8 on 64-bit systems"
+  []
+  (case (get-arch)
+    (:amd64 :arm64) 8
+    :arm32 4
+    8))  ; Default to 64-bit
+
+(defn arch-info
+  "Get comprehensive architecture information.
+
+  Returns map with:
+  - :arch - Architecture keyword (:amd64, :arm64, etc.)
+  - :arch-name - Human-readable name
+  - :os-arch - OS property value
+  - :os-name - Operating system name
+  - :os-version - OS version
+  - :pointer-size - Pointer size in bytes
+  - :java-version - Java version
+  - :endianness - Byte order (:little or :big)
+
+  Example:
+    (arch-info)
+    ; => {:arch :arm64
+    ;     :arch-name \"ARM64\"
+    ;     :os-arch \"aarch64\"
+    ;     :os-name \"Linux\"
+    ;     :os-version \"6.14.0-33-generic\"
+    ;     :pointer-size 8
+    ;     :java-version \"17.0.9\"
+    ;     :endianness :little}"
+  []
+  {:arch (get-arch)
+   :arch-name (arch-name)
+   :os-arch (System/getProperty "os.arch")
+   :os-name (System/getProperty "os.name")
+   :os-version (System/getProperty "os.version")
+   :pointer-size (pointer-size)
+   :java-version (System/getProperty "java.version")
+   :endianness (if (= ByteOrder/nativeOrder ByteOrder/LITTLE_ENDIAN)
+                 :little
+                 :big)})
+
+(defn print-arch-info
+  "Print architecture information to stdout.
+
+  Example:
+    (print-arch-info)
+    ; Architecture: ARM64 (aarch64)
+    ; OS: Linux 6.14.0-33-generic
+    ; Java: 17.0.9
+    ; Pointer size: 8 bytes
+    ; Endianness: little-endian"
+  []
+  (let [info (arch-info)]
+    (println "========================================")
+    (println "Architecture Information")
+    (println "========================================")
+    (println "Architecture:" (:arch-name info) (str "(" (:os-arch info) ")"))
+    (println "OS:" (:os-name info) (:os-version info))
+    (println "Java:" (:java-version info))
+    (println "Pointer size:" (:pointer-size info) "bytes")
+    (println "Endianness:" (if (= :little (:endianness info))
+                             "little-endian"
+                             "big-endian"))
+    (println "========================================")))

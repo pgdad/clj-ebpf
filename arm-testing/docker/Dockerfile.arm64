@@ -1,0 +1,74 @@
+# Multi-architecture Dockerfile for BPF testing on ARM64 and AMD64
+# This Dockerfile can be built for both architectures using buildx
+
+FROM --platform=$TARGETPLATFORM ubuntu:22.04
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG TARGETARCH
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages for BPF development and testing
+RUN apt-get update && apt-get install -y \
+    # Build essentials
+    build-essential \
+    clang \
+    llvm \
+    # BPF tools and libraries
+    linux-headers-generic \
+    libbpf-dev \
+    bpftool \
+    # Java/Clojure
+    openjdk-17-jdk \
+    curl \
+    rlwrap \
+    # Debugging and utilities
+    strace \
+    gdb \
+    vim \
+    git \
+    wget \
+    # Kernel modules and BTF support
+    kmod \
+    # Architecture-specific kernel headers
+    linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Clojure CLI tools
+RUN curl -O https://download.clojure.org/install/linux-install-1.11.1.1262.sh && \
+    chmod +x linux-install-1.11.1.1262.sh && \
+    ./linux-install-1.11.1.1262.sh && \
+    rm linux-install-1.11.1.1262.sh
+
+# Create working directory
+WORKDIR /workspace
+
+# Copy project files
+COPY . /workspace/
+
+# Set environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-${TARGETARCH}
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Create architecture info script
+RUN echo '#!/bin/bash\n\
+echo "================================="\n\
+echo "Architecture Information"\n\
+echo "================================="\n\
+echo "Platform: $(uname -m)"\n\
+echo "Kernel: $(uname -r)"\n\
+echo "OS: $(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2)"\n\
+echo "Java: $(java -version 2>&1 | head -n 1)"\n\
+echo "Clojure: $(clojure --version 2>&1)"\n\
+echo "================================="\n\
+' > /usr/local/bin/arch-info && chmod +x /usr/local/bin/arch-info
+
+# Print architecture information at build time
+RUN echo "Building for: ${TARGETPLATFORM} (${TARGETARCH})" && \
+    uname -m && \
+    java -version
+
+# Default command
+CMD ["/bin/bash"]

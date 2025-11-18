@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # AMD64 testing environment
+  clj-ebpf-amd64:
+    build:
+      context: ../..
+      dockerfile: arm-testing/docker/Dockerfile.arm64
+      platforms:
+        - linux/amd64
+    image: clj-ebpf:amd64
+    platform: linux/amd64
+    container_name: clj-ebpf-test-amd64
+    privileged: true  # Required for BPF operations
+    volumes:
+      - ../..:/workspace
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /sys/kernel/btf:/sys/kernel/btf:ro
+    environment:
+      - ARCH=amd64
+      - CLOJURE_TEST_ARCH=amd64
+    command: /bin/bash -c "arch-info && /bin/bash"
+
+  # ARM64 testing environment
+  clj-ebpf-arm64:
+    build:
+      context: ../..
+      dockerfile: arm-testing/docker/Dockerfile.arm64
+      platforms:
+        - linux/arm64
+    image: clj-ebpf:arm64
+    platform: linux/arm64
+    container_name: clj-ebpf-test-arm64
+    privileged: true  # Required for BPF operations
+    volumes:
+      - ../..:/workspace
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /sys/kernel/btf:/sys/kernel/btf:ro
+    environment:
+      - ARCH=arm64
+      - CLOJURE_TEST_ARCH=arm64
+    command: /bin/bash -c "arch-info && /bin/bash"

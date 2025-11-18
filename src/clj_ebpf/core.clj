@@ -99,6 +99,16 @@
 (def bpf-fs-mounted? utils/bpf-fs-mounted?)
 (def ensure-bpf-fs utils/ensure-bpf-fs)
 
+;; Architecture detection
+(def get-arch utils/get-arch)
+(def arch-name utils/arch-name)
+(def amd64? utils/amd64?)
+(def arm64? utils/arm64?)
+(def arm32? utils/arm32?)
+(def pointer-size utils/pointer-size)
+(def arch-info utils/arch-info)
+(def print-arch-info utils/print-arch-info)
+
 ;; XDP (eXpress Data Path)
 (def interface-name->index xdp/interface-name->index)
 (def interface-index->name xdp/interface-index->name)
