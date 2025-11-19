@@ -15,7 +15,7 @@ By the end of this chapter, you will:
 
 - Basic Clojure knowledge
 - Linux system (kernel 5.8+)
-- Java 17+ installed
+- Java 25+ installed (for Panama API support)
 - Clojure CLI tools installed
 
 ## 1.1 What is eBPF?
