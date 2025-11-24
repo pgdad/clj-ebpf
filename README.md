@@ -1826,6 +1826,7 @@ See the `examples/` directory for complete examples:
 
 - `examples/simple_kprobe.clj` - Basic kprobe attachment
 - `examples/execve_tracer.clj` - Trace execve system calls
+- `examples/custom_helpers.clj` - Adding custom BPF helper functions
 
 Run examples:
 
@@ -1835,7 +1836,57 @@ clj -M -m examples.execve-tracer map
 
 # Trace execve (requires root)
 sudo clj -M -m examples.execve-tracer trace
+
+# Custom helpers example (shows how to extend clj-ebpf)
+clj -M:examples -m custom-helpers
 ```
+
+## Extending clj-ebpf
+
+### Adding New BPF Helper Functions
+
+clj-ebpf makes it easy to add support for new BPF helper functions as they're introduced in newer kernel versions:
+
+```clojure
+;; Add to src/clj_ebpf/helpers.clj
+(def helper-metadata
+  {;; Your new helper
+   :ktime-get-real-ns
+   {:id 212
+    :name "bpf_ktime_get_real_ns"
+    :signature {:return :u64 :args []}
+    :min-kernel "6.3"
+    :prog-types :all
+    :category :time
+    :description "Get real (wall-clock) time in nanoseconds."}})
+
+;; Query helper information
+(require '[clj-ebpf.helpers :as helpers])
+
+(helpers/get-helper-info :ktime-get-real-ns)
+(helpers/helper-compatible? :ktime-get-real-ns :xdp "6.3")
+(helpers/available-helpers :xdp "6.4")
+
+;; Use in BPF programs
+(require '[clj-ebpf.dsl :as dsl])
+
+(def program
+  (dsl/assemble [(dsl/call 212)  ; Call new helper
+                 (dsl/exit-insn)]))
+```
+
+**Resources:**
+- **Full Guide**: `docs/adding-new-helpers.md` - Comprehensive guide to extending helpers
+- **Example Code**: `examples/custom_helpers.clj` - Runnable examples and utilities
+- **Helper Metadata**: `src/clj_ebpf/helpers.clj` - Complete helper registry (200+ helpers)
+
+The helper system provides:
+- Type-safe helper definitions with metadata
+- Kernel version compatibility checking
+- Program type compatibility validation
+- Category-based organization (map, network, trace, time, etc.)
+- Introspection and discovery APIs
+- Automatic documentation generation
 
 ## Testing
 
@@ -1958,7 +2009,7 @@ Contributions welcome! Priority areas for improvement:
 
 ## License
 
-Copyright © 2024
+Copyright © 2025
 
 Distributed under the Eclipse Public License version 1.0.
 
