@@ -53,8 +53,25 @@ Build a comprehensive debugging toolkit for BPF programs with instruction tracin
 ```clojure
 (ns testing.debug-toolkit
   (:require [clj-ebpf.core :as bpf]
+            [clj-ebpf.maps :as maps]
+            [clj-ebpf.errors :as errors]
+            [clj-ebpf.arch :as arch]
+            [clj-ebpf.test-utils :as tu]
             [clojure.string :as str]
             [clojure.pprint :as pp]))
+
+;; ============================================================================
+;; Platform Information (Using arch.clj)
+;; ============================================================================
+
+(defn show-platform-info
+  "Display platform information for debugging"
+  []
+  (println "\n=== Platform Information ===")
+  (println "Architecture:" arch/arch-name)
+  (println "Arch keyword:" arch/current-arch)
+  (println "BPF syscall:" (arch/get-syscall-nr :bpf))
+  (println "Capabilities:" (if (tu/has-bpf-capabilities?) "Available" "Not available")))
 
 ;; ============================================================================
 ;; Instruction Tracer
@@ -298,8 +315,55 @@ Build a comprehensive debugging toolkit for BPF programs with instruction tracin
         (println (format "Section %d: %.0f ns average" section-id avg))))))
 
 ;; ============================================================================
-;; Error Detection
+;; Error Detection (Integrated with clj-ebpf.errors)
 ;; ============================================================================
+
+;; Use structured error handling from errors.clj
+(defn safe-operation
+  "Execute operation with retry on transient errors"
+  [operation-fn & {:keys [max-retries on-error]
+                   :or {max-retries 3}}]
+  (errors/with-retry operation-fn
+    {:max-retries max-retries
+     :on-retry (fn [attempt delay e]
+                 (println (format "Retry %d after %dms: %s"
+                                 attempt delay (errors/error-summary e))))}))
+
+(defn diagnose-error
+  "Diagnose a BPF error using errors.clj utilities"
+  [e]
+  (println "\n=== Error Diagnosis ===")
+  (println (errors/format-error e))
+
+  ;; Provide specific guidance based on error type
+  (cond
+    (errors/permission-error? e)
+    (do
+      (println "\n💡 Suggestions:")
+      (println "  - Run with sudo or CAP_BPF capability")
+      (println "  - Check /proc/sys/kernel/unprivileged_bpf_disabled")
+      (println "  - Verify SELinux/AppArmor policies"))
+
+    (errors/resource-error? e)
+    (do
+      (println "\n💡 Suggestions:")
+      (println "  - Reduce map sizes or entry counts")
+      (println "  - Check /proc/sys/kernel/bpf_stats_enabled")
+      (println "  - Review memory limits (ulimit -l)"))
+
+    (errors/verifier-error? e)
+    (do
+      (println "\n💡 Suggestions:")
+      (println "  - Check verifier log for specific instruction")
+      (println "  - Ensure bounds checks before memory access")
+      (println "  - Verify loop termination conditions"))
+
+    (errors/transient-error? e)
+    (do
+      (println "\n💡 Suggestions:")
+      (println "  - Use errors/with-retry for automatic retry")
+      (println "  - Reduce concurrent BPF operations")
+      (println "  - Check system load"))))
 
 (def error-patterns
   "Common error patterns to detect"
@@ -558,8 +622,32 @@ Build a comprehensive debugging toolkit for BPF programs with instruction tracin
 2. **Map Inspector** - View and compare map contents
 3. **Event Replay** - Record and replay events for debugging
 4. **Performance Profiler** - Measure execution time
-5. **Error Detection** - Automatically find common issues
+5. **Error Detection** - Automatically find common issues using `clj-ebpf.errors`
 6. **Interactive Shell** - Debug programs interactively
+7. **Platform Info** - Display architecture details using `clj-ebpf.arch`
+
+## Integration with clj-ebpf Error Handling
+
+The debugging toolkit integrates with `clj-ebpf.errors` for structured error handling:
+
+```clojure
+;; Diagnose any BPF error
+(try
+  (bpf/load-program my-program)
+  (catch Exception e
+    (diagnose-error e)))
+
+;; Automatic retry on transient errors
+(safe-operation
+  #(maps/map-lookup my-map key)
+  :max-retries 5)
+
+;; Check error types
+(errors/permission-error? e)   ; Permission issues
+(errors/verifier-error? e)     ; Verifier rejection
+(errors/resource-error? e)     ; Resource exhaustion
+(errors/transient-error? e)    ; Retriable errors
+```
 
 ## Usage Examples
 
@@ -619,11 +707,24 @@ Build a comprehensive debugging toolkit for BPF programs with instruction tracin
 - Map-based debugging is most practical
 - Event replay enables reproducing bugs
 - Performance profiling finds bottlenecks
-- Automated error detection catches common issues
+- Automated error detection catches common issues using `clj-ebpf.errors`
 - Interactive tools improve debugging experience
+- Use `clj-ebpf.arch` for platform-aware debugging
+- Structured error handling enables automatic recovery
+
+## clj-ebpf Modules Used
+
+| Module | Purpose |
+|--------|---------|
+| `clj-ebpf.errors` | Structured error handling, retry logic, error classification |
+| `clj-ebpf.arch` | Platform detection, syscall numbers |
+| `clj-ebpf.test-utils` | Capability checking, test helpers |
+| `clj-ebpf.maps` | Map operations for inspection |
 
 ## References
 
+- [clj-ebpf.errors Documentation](../../api/errors.md)
+- [clj-ebpf.arch Documentation](../../api/arch.md)
 - [bpftool Documentation](https://github.com/libbpf/bpftool)
 - [BPF Debugging](https://www.kernel.org/doc/html/latest/bpf/bpf_design_QA.html)
 - [Linux Tracing](https://www.kernel.org/doc/html/latest/trace/index.html)

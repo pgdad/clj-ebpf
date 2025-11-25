@@ -714,21 +714,43 @@ jobs:
 
 ### Lab 14.1: Unit Testing Framework
 
-Build a comprehensive unit testing framework for BPF programs with test fixtures and assertions.
+Build a comprehensive unit testing framework for BPF programs with test fixtures and assertions using clj-ebpf's built-in `mock.clj` and `test_utils.clj` modules.
 
-**Skills**: Test design, mock data, assertions
+**Skills**: Test design, mock data, assertions, fixture management
+
+**Modules**: `clj-ebpf.mock`, `clj-ebpf.test-utils`, `clj-ebpf.errors`
 
 ### Lab 14.2: Debugging Toolkit
 
-Implement debugging tools including instruction tracing, map inspection, and event replay.
+Implement debugging tools including instruction tracing, map inspection, and event replay. Integrates with `clj-ebpf.errors` for structured error handling and `clj-ebpf.arch` for platform information.
 
 **Skills**: Debugging, introspection, tooling
 
+**Modules**: `clj-ebpf.errors`, `clj-ebpf.arch`
+
 ### Lab 14.3: Verifier Error Fixer
 
-Analyze and automatically fix common verifier errors.
+Analyze and automatically fix common verifier errors using `clj-ebpf.errors` utilities.
 
 **Skills**: Verifier understanding, error analysis, code transformation
+
+**Modules**: `clj-ebpf.errors`
+
+### Lab 14.4: Mock Testing Infrastructure
+
+Deep dive into clj-ebpf's mock syscall layer for unprivileged BPF testing. Covers mock modes, test fixtures, failure injection, and performance benchmarking.
+
+**Skills**: Mocking, fixture patterns, failure injection, benchmark testing
+
+**Modules**: `clj-ebpf.mock`, `clj-ebpf.test-utils`
+
+### Lab 14.5: Property-Based Testing
+
+Use property-based testing with test.check to verify BPF operation invariants across thousands of generated inputs. Covers generators for maps, instructions, packets, and events.
+
+**Skills**: Property-based testing, generators, invariant verification
+
+**Modules**: `clj-ebpf.generators`, `clj-ebpf.properties`, `clj-ebpf.dsl`, `clj-ebpf.utils`
 
 ## Key Takeaways
 

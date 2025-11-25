@@ -295,8 +295,34 @@ at program exit R0 is not a known value
 
 ```clojure
 (ns testing.verifier-analyzer
+  "Verifier error analysis using clj-ebpf's structured error handling"
   (:require [clj-ebpf.core :as bpf]
-            [clojure.string :as str]))
+            [clj-ebpf.errors :as errors]
+            [clj-ebpf.arch :as arch]
+            [clj-ebpf.dsl.core :as dsl]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest testing is]]))
+
+;; ============================================================================
+;; Integration with clj-ebpf.errors
+;; ============================================================================
+
+;; The errors.clj module provides structured error handling for verifier errors:
+;;
+;; - errors/verifier-error? - Check if an exception is a verifier rejection
+;; - errors/format-error    - Format error for display
+;; - errors/error-summary   - One-line error summary
+;; - :verifier-log in ex-data - Contains the full verifier log
+
+(defn analyze-with-errors-module
+  "Analyze a verifier error using clj-ebpf.errors"
+  [e]
+  (when (errors/verifier-error? e)
+    (let [data (ex-data e)]
+      {:error-type :verifier-error
+       :message (.getMessage e)
+       :verifier-log (:verifier-log data)
+       :formatted (errors/format-error e)})))
 
 ;; ============================================================================
 ;; Error Pattern Matching
@@ -441,20 +467,25 @@ at program exit R0 is not a known value
 ;; ============================================================================
 
 (defn try-load-with-error-capture
-  "Attempt to load program, capturing verifier errors"
+  "Attempt to load program, capturing verifier errors.
+   Uses clj-ebpf.errors for structured error information."
   [program]
   (try
     {:success true
      :program (bpf/load-program program)}
     (catch Exception e
-      {:success false
-       :error (.getMessage e)
-       :verifier-log (extract-verifier-log e)})))
+      (let [analysis (analyze-with-errors-module e)]
+        {:success false
+         :error (.getMessage e)
+         :verifier-log (or (:verifier-log analysis)
+                          (extract-verifier-log e))
+         :is-verifier-error (errors/verifier-error? e)
+         :formatted-error (errors/format-error e)}))))
 
 (defn extract-verifier-log [exception]
-  ;; Parse exception for verifier log
-  ;; In real implementation, would parse detailed verifier output
-  (.getMessage exception))
+  "Extract verifier log from exception data"
+  (or (:verifier-log (ex-data exception))
+      (.getMessage exception)))
 
 (defn fix-program-iteratively
   "Attempt to fix program by applying fixes iteratively"
@@ -612,9 +643,42 @@ at program exit R0 is not a known value
 | `unreachable insn` | Dead code | Remove unreachable code |
 | `invalid arg` | Wrong helper arg type | Check helper signature |
 
+## Using clj-ebpf.errors for Verifier Errors
+
+The `clj-ebpf.errors` module provides first-class support for verifier errors:
+
+```clojure
+(require '[clj-ebpf.errors :as errors])
+
+;; Load and handle verifier errors
+(try
+  (bpf/load-program my-program)
+  (catch Exception e
+    (when (errors/verifier-error? e)
+      (println "Verifier rejected program:")
+      (println (errors/format-error e))
+
+      ;; Access the raw verifier log
+      (when-let [log (:verifier-log (ex-data e))]
+        (println "\nFull verifier log:")
+        (println log)))))
+
+;; Error classification
+(errors/verifier-error? e)    ; Is this a verifier rejection?
+(errors/permission-error? e)  ; Permission issue (not verifier)
+(errors/resource-error? e)    ; Resource exhaustion (not verifier)
+
+;; Formatted output
+(errors/format-error e)       ; Multi-line formatted error
+(errors/error-summary e)      ; One-line summary
+```
+
 ## Key Takeaways
 
 - Verifier errors are cryptic but follow patterns
+- Use `clj-ebpf.errors` for structured error handling
+- `errors/verifier-error?` identifies verifier rejections
+- Access `:verifier-log` in ex-data for full details
 - Most errors have systematic fixes
 - Bounds checks are most common requirement
 - Loop bounds must be provable at verification time
@@ -623,8 +687,17 @@ at program exit R0 is not a known value
 - Auto-fixing is possible for common errors
 - Understanding verifier helps write better code
 
+## clj-ebpf Modules Used
+
+| Module | Purpose |
+|--------|---------|
+| `clj-ebpf.errors` | Error classification, formatting, verifier-error? predicate |
+| `clj-ebpf.dsl.core` | DSL for writing BPF programs |
+| `clj-ebpf.arch` | Architecture-specific constants |
+
 ## References
 
+- [clj-ebpf.errors Documentation](../../api/errors.md)
 - [BPF Verifier Documentation](https://www.kernel.org/doc/html/latest/bpf/verifier.html)
 - [Verifier Error Examples](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#verifier)
 - [libbpf Error Handling](https://github.com/libbpf/libbpf)

@@ -37,10 +37,19 @@ Create `lab-1-1.clj`:
 ```clojure
 (ns lab-1-1-hello-ebpf
   "Lab 1.1: Hello eBPF - Your first BPF program"
-  (:require [clj-ebpf.core :as bpf]))
+  (:require [clj-ebpf.core :as bpf]
+            [clj-ebpf.arch :as arch]
+            [clj-ebpf.errors :as errors]))
 
 (defn -main []
   (println "=== Lab 1.1: Hello eBPF ===\n")
+
+  ;; Step 0: Show platform information (using clj-ebpf.arch)
+  (println "Step 0: Platform Information")
+  (println "Architecture:" arch/arch-name)
+  (println "Arch keyword:" arch/current-arch)
+  (println "BPF syscall number:" (arch/get-syscall-nr :bpf))
+  (println "")
 
   ;; Step 1: Initialize clj-ebpf
   (println "Step 1: Initializing clj-ebpf...")
@@ -82,10 +91,28 @@ Create `lab-1-1.clj`:
 
     (catch Exception e
       (println "✗ Error:" (.getMessage e))
-      (println "\nTroubleshooting:")
-      (println "- Check if BPF filesystem is mounted: ls /sys/fs/bpf")
-      (println "- Check permissions: run with sudo or CAP_BPF")
-      (println "- Check kernel version: uname -r (need 5.8+)")))
+
+      ;; Use structured error handling from clj-ebpf.errors
+      (println "\n" (errors/format-error e))
+
+      (cond
+        (errors/permission-error? e)
+        (do
+          (println "\nPermission Error - Try:")
+          (println "- Run with sudo")
+          (println "- Add CAP_BPF capability: sudo setcap cap_bpf+eip $(which java)"))
+
+        (errors/verifier-error? e)
+        (do
+          (println "\nVerifier Error - Check:")
+          (println "- Program ends with exit instruction")
+          (println "- All registers initialized before use"))
+
+        :else
+        (do
+          (println "\nTroubleshooting:")
+          (println "- Check if BPF filesystem is mounted: ls /sys/fs/bpf")
+          (println "- Check kernel version: uname -r (need 5.8+)")))))
 
   (println "\n=== Lab 1.1 Complete! ==="))
 ```
@@ -101,6 +128,11 @@ clojure -M lab-1-1.clj
 
 ```
 === Lab 1.1: Hello eBPF ===
+
+Step 0: Platform Information
+Architecture: x86-64 (AMD64)
+Arch keyword: :x86_64
+BPF syscall number: 321
 
 Step 1: Initializing clj-ebpf...
 Kernel version: 0x050800
@@ -217,6 +249,36 @@ sudo mount -t bpf bpf /sys/fs/bpf
 ✅ The verifier ensures program safety
 ✅ Programs are JIT-compiled for performance
 ✅ File descriptors represent loaded programs
+✅ Use `clj-ebpf.arch` for platform-specific information
+✅ Use `clj-ebpf.errors` for structured error handling
+
+## clj-ebpf Modules Introduced
+
+| Module | Purpose |
+|--------|---------|
+| `clj-ebpf.core` | Main API for loading/managing BPF programs |
+| `clj-ebpf.arch` | Architecture detection, syscall numbers |
+| `clj-ebpf.errors` | Structured error handling |
+
+## Alternative DSL Imports
+
+For more focused code, you can import DSL submodules directly:
+
+```clojure
+;; Instead of using everything from clj-ebpf.core:
+(:require [clj-ebpf.core :as bpf])
+
+;; You can import specific DSL modules:
+(:require [clj-ebpf.dsl.core :as dsl]     ; Unified DSL
+          [clj-ebpf.dsl.alu :as alu]      ; ALU operations
+          [clj-ebpf.dsl.mem :as mem]      ; Memory operations
+          [clj-ebpf.dsl.jump :as jmp])    ; Jump/control flow
+
+;; Then use them directly:
+(dsl/assemble
+  [(alu/mov :r0 0)
+   (jmp/exit-insn)])
+```
 
 ## Next Steps
 

@@ -2,16 +2,17 @@
 
 ## Objective
 
-Build a comprehensive unit testing framework for BPF programs that provides test fixtures, assertions, mock data generation, and automated test execution.
+Build a comprehensive unit testing framework for BPF programs that provides test fixtures, assertions, mock data generation, and automated test execution. Learn to use clj-ebpf's built-in testing infrastructure.
 
 ## Learning Goals
 
+- Use the built-in mock syscall layer for unprivileged testing
+- Leverage test utilities for common patterns
 - Design testable BPF programs
 - Create reusable test fixtures
 - Implement BPF-specific assertions
 - Generate mock packet/event data
 - Automate test execution
-- Measure test coverage
 
 ## Architecture
 
@@ -19,417 +20,361 @@ Build a comprehensive unit testing framework for BPF programs that provides test
 ┌─────────────────────────────────────────────┐
 │         Test Framework                      │
 │                                             │
-│  ┌────────────┐  ┌──────────────┐          │
-│  │  Fixtures  │  │  Assertions  │          │
-│  └────────────┘  └──────────────┘          │
-│         ↓              ↓                    │
-│  ┌──────────────────────────────┐          │
-│  │     Test Runner              │          │
-│  └──────────────────────────────┘          │
+│  ┌────────────────┐  ┌─────────────────┐   │
+│  │ clj-ebpf.mock  │  │ clj-ebpf.test-  │   │
+│  │  (syscalls)    │  │    utils        │   │
+│  └────────────────┘  └─────────────────┘   │
+│         ↓                    ↓              │
+│  ┌──────────────────────────────────────┐  │
+│  │     Test Runner (clojure.test)       │  │
+│  └──────────────────────────────────────┘  │
 │         ↓                                   │
-│  ┌──────────────────────────────┐          │
-│  │     BPF Program              │          │
-│  └──────────────────────────────┘          │
+│  ┌──────────────────────────────────────┐  │
+│  │     BPF Program (mock or real)       │  │
+│  └──────────────────────────────────────┘  │
 │         ↓                                   │
-│  ┌──────────────────────────────┐          │
-│  │     Results + Coverage       │          │
-│  └──────────────────────────────┘          │
+│  ┌──────────────────────────────────────┐  │
+│  │     Results + Coverage               │  │
+│  └──────────────────────────────────────┘  │
 └─────────────────────────────────────────────┘
+```
+
+## Built-in Testing Infrastructure
+
+clj-ebpf provides two key namespaces for testing:
+
+### 1. `clj-ebpf.mock` - Mock Syscall Layer
+
+Enables testing BPF logic **without CAP_BPF capabilities**:
+
+```clojure
+(require '[clj-ebpf.mock :as mock])
+
+;; Enable mock mode for testing
+(mock/with-mock-bpf
+  ;; All BPF operations use in-memory simulation
+  (let [m (maps/create-map :hash 100 4 8)]
+    (maps/map-update m key val)
+    (maps/map-lookup m key)))
+```
+
+### 2. `clj-ebpf.test-utils` - Test Utilities
+
+Provides fixtures, data generators, and assertions:
+
+```clojure
+(require '[clj-ebpf.test-utils :as tu])
+
+;; Check if real BPF is available
+(tu/has-bpf-capabilities?)  ; => true/false
+
+;; Use fixtures
+(use-fixtures :each tu/mock-fixture)
+
+;; Generate test data
+(tu/make-key 42)       ; => byte array key
+(tu/make-value 100)    ; => byte array value
+(tu/make-entries 10 4 8)  ; => 10 [key value] pairs
+
+;; Build test packets
+(tu/build-test-packet :protocol :tcp :src-port 8080)
 ```
 
 ## Implementation
 
 ```clojure
 (ns testing.unit-framework
-  (:require [clj-ebpf.core :as bpf]
-            [clojure.test :refer :all]))
+  "Unit testing framework using clj-ebpf's built-in testing infrastructure"
+  (:require [clojure.test :refer :all]
+            [clj-ebpf.core :as bpf]
+            [clj-ebpf.maps :as maps]
+            [clj-ebpf.mock :as mock]
+            [clj-ebpf.test-utils :as tu]
+            [clj-ebpf.errors :as errors]))
 
 ;; ============================================================================
-;; Test Fixtures
+;; Test Fixtures (Using Built-in Infrastructure)
 ;; ============================================================================
 
-(defn create-test-fixture
-  "Create a test fixture with setup and teardown"
-  [setup-fn teardown-fn]
-  (fn [test-fn]
-    (let [context (setup-fn)]
-      (try
-        (test-fn context)
-        (finally
-          (teardown-fn context))))))
+;; Use the built-in mock fixture for all tests
+(use-fixtures :each tu/mock-fixture)
 
-(defn bpf-program-fixture
-  "Standard fixture for testing BPF programs"
-  [program-def]
-  (create-test-fixture
-    ;; Setup
+;; For tests that require real BPF, use capabilities fixture
+;; (use-fixtures :once tu/capabilities-fixture)
+
+;; Custom fixture combining mock + cleanup
+(defn comprehensive-fixture
+  "Fixture that uses mock BPF and ensures cleanup"
+  [f]
+  (tu/mock-fixture
     (fn []
-      (let [prog (bpf/load-program program-def)]
-        {:program prog
-         :maps (:maps prog)
-         :start-time (System/currentTimeMillis)}))
-
-    ;; Teardown
-    (fn [context]
-      (bpf/unload-program (:program context))
-      (println (format "Test duration: %dms"
-                      (- (System/currentTimeMillis) (:start-time context)))))))
-
-;; Example usage
-(def packet-counter-fixture
-  (bpf-program-fixture packet-counter-program))
-
-(use-fixtures :each packet-counter-fixture)
+      (tu/cleanup-fixture f))))
 
 ;; ============================================================================
-;; Mock Data Generation
+;; Testing Maps with Mock Infrastructure
 ;; ============================================================================
 
-(defn generate-ipv4-packet
-  "Generate mock IPv4 packet"
-  [& {:keys [src-ip dst-ip protocol src-port dst-port payload-size]
-      :or {src-ip "192.168.1.1"
-           dst-ip "10.0.0.1"
-           protocol 6  ; TCP
-           src-port 12345
-           dst-port 80
-           payload-size 64}}]
+(deftest test-hash-map-operations
+  (testing "Hash map basic operations in mock mode"
+    ;; mock-fixture already enabled mock mode
+    (tu/with-temp-map [m {:type :hash :key-size 4 :value-size 8 :max-entries 100}]
+      (let [key (tu/make-key 42)
+            val (tu/make-value 12345)]
 
-  (let [packet (byte-array (+ 54 payload-size))]  ; Eth + IP + TCP + payload
+        ;; Insert
+        (maps/map-update m key val)
 
-    ;; Ethernet header (14 bytes)
-    ;; Destination MAC
-    (aset-byte packet 0 (byte 0xFF))
-    (aset-byte packet 1 (byte 0xFF))
-    (aset-byte packet 2 (byte 0xFF))
-    (aset-byte packet 3 (byte 0xFF))
-    (aset-byte packet 4 (byte 0xFF))
-    (aset-byte packet 5 (byte 0xFF))
+        ;; Lookup
+        (let [result (maps/map-lookup m key)]
+          (tu/assert-bytes-equal val result "Value should match"))
 
-    ;; Source MAC
-    (aset-byte packet 6 (byte 0x00))
-    (aset-byte packet 7 (byte 0x11))
-    (aset-byte packet 8 (byte 0x22))
-    (aset-byte packet 9 (byte 0x33))
-    (aset-byte packet 10 (byte 0x44))
-    (aset-byte packet 11 (byte 0x55))
+        ;; Delete
+        (maps/map-delete m key)
+        (is (nil? (maps/map-lookup m key)) "Key should be deleted")))))
 
-    ;; EtherType (0x0800 = IPv4)
-    (aset-byte packet 12 (byte 0x08))
-    (aset-byte packet 13 (byte 0x00))
+(deftest test-array-map-operations
+  (testing "Array map operations"
+    (tu/with-temp-map [m {:type :array :key-size 4 :value-size 8 :max-entries 10}]
+      (doseq [[key-bytes val-bytes] (tu/make-entries 10 4 8)]
+        (maps/map-update m key-bytes val-bytes))
 
-    ;; IPv4 header (20 bytes, simplified)
-    ;; Version + IHL
-    (aset-byte packet 14 (byte 0x45))
+      ;; Verify all entries
+      (doseq [i (range 10)]
+        (let [key (tu/make-key i)
+              expected (tu/make-value (* i i))
+              actual (maps/map-lookup m key)]
+          (tu/assert-bytes-equal expected actual))))))
 
-    ;; Protocol
-    (aset-byte packet 23 (byte protocol))
+(deftest test-map-overflow
+  (testing "Map overflow behavior"
+    (tu/with-temp-map [m {:type :hash :key-size 4 :value-size 8 :max-entries 5}]
+      ;; Fill the map
+      (doseq [i (range 5)]
+        (maps/map-update m (tu/make-key i) (tu/make-value i)))
 
-    ;; Source IP
-    (let [src-parts (map #(Integer/parseInt %) (clojure.string/split src-ip #"\."))]
-      (aset-byte packet 26 (byte (nth src-parts 0)))
-      (aset-byte packet 27 (byte (nth src-parts 1)))
-      (aset-byte packet 28 (byte (nth src-parts 2)))
-      (aset-byte packet 29 (byte (nth src-parts 3))))
-
-    ;; Destination IP
-    (let [dst-parts (map #(Integer/parseInt %) (clojure.string/split dst-ip #"\."))]
-      (aset-byte packet 30 (byte (nth dst-parts 0)))
-      (aset-byte packet 31 (byte (nth dst-parts 1)))
-      (aset-byte packet 32 (byte (nth dst-parts 2)))
-      (aset-byte packet 33 (byte (nth dst-parts 3))))
-
-    ;; TCP/UDP header (20 bytes, simplified)
-    ;; Source port (big-endian)
-    (aset-byte packet 34 (byte (bit-shift-right src-port 8)))
-    (aset-byte packet 35 (byte (bit-and src-port 0xFF)))
-
-    ;; Destination port
-    (aset-byte packet 36 (byte (bit-shift-right dst-port 8)))
-    (aset-byte packet 37 (byte (bit-and dst-port 0xFF)))
-
-    packet))
-
-(defn generate-process-event
-  "Generate mock process event"
-  [& {:keys [pid uid comm timestamp]
-      :or {pid 1234
-           uid 1000
-           comm "test-process"
-           timestamp (System/nanoTime)}}]
-
-  {:pid pid
-   :uid uid
-   :comm comm
-   :timestamp timestamp})
-
-(defn generate-syscall-event
-  "Generate mock syscall event"
-  [& {:keys [syscall-nr args ret]
-      :or {syscall-nr 1  ; write
-           args [1 0x7fff 100]
-           ret 100}}]
-
-  {:syscall-nr syscall-nr
-   :args args
-   :ret ret})
+      ;; Attempting to add 6th entry should fail
+      (tu/assert-throws-errno :enospc
+        (maps/map-update m (tu/make-key 99) (tu/make-value 99))))))
 
 ;; ============================================================================
-;; Packet Injection
+;; Mock Packet Generation (Using Built-in Helpers)
 ;; ============================================================================
 
-(defn inject-xdp-packet
-  "Inject packet into XDP program for testing"
-  [program packet]
-  ;; This would use BPF_PROG_TEST_RUN ioctl
-  ;; Simplified here for demonstration
-  (let [ctx {:data packet
-             :data-end (+ (alength packet))
-             :data-meta 0}
-        result (bpf/test-run program ctx)]
-    result))
+(deftest test-packet-generation
+  (testing "Packet building utilities"
+    (let [tcp-packet (tu/build-test-packet
+                       :protocol :tcp
+                       :src-ip (byte-array [192 168 1 1])
+                       :dst-ip (byte-array [10 0 0 1])
+                       :src-port 12345
+                       :dst-port 80)]
 
-(defn inject-tracepoint-event
-  "Inject event into tracepoint program"
-  [program event-data]
-  (let [ctx (event-to-ctx event-data)
-        result (bpf/test-run program ctx)]
-    result))
+      ;; Verify packet structure
+      (is (= 54 (count tcp-packet)) "TCP packet should be 54 bytes (eth+ip+tcp)")
+
+      ;; Check EtherType (IPv4 = 0x0800)
+      (is (= 0x08 (bit-and (aget tcp-packet 12) 0xFF)))
+      (is (= 0x00 (bit-and (aget tcp-packet 13) 0xFF))))))
+
+(deftest test-ethernet-header
+  (testing "Ethernet header building"
+    (let [eth (tu/build-eth-header
+                :src-mac (byte-array [0x00 0x11 0x22 0x33 0x44 0x55])
+                :dst-mac (byte-array [0xFF 0xFF 0xFF 0xFF 0xFF 0xFF])
+                :eth-type 0x0800)]
+
+      (is (= 14 (count eth)) "Ethernet header is 14 bytes"))))
+
+(deftest test-ipv4-header
+  (testing "IPv4 header building"
+    (let [ip (tu/build-ipv4-header
+               :src-ip (byte-array [10 0 0 1])
+               :dst-ip (byte-array [10 0 0 2])
+               :protocol 6  ; TCP
+               :ttl 64)]
+
+      (is (= 20 (count ip)) "IPv4 header is 20 bytes")
+      (is (= 0x45 (bit-and (aget ip 0) 0xFF)) "Version 4, IHL 5"))))
 
 ;; ============================================================================
-;; BPF-Specific Assertions
+;; Testing with Failure Injection
+;; ============================================================================
+
+(deftest test-transient-failures
+  (testing "Handling transient BPF errors"
+    ;; Inject failures for testing retry logic
+    (mock/with-mock-failure :map-lookup {:errno :eagain :count 2}
+      (tu/with-temp-map [m {:type :hash :key-size 4 :value-size 8 :max-entries 100}]
+        (let [key (tu/make-key 1)
+              val (tu/make-value 100)]
+
+          ;; First lookup will fail twice, then succeed
+          (maps/map-update m key val)
+
+          ;; With retry wrapper from errors.clj
+          (let [result (errors/with-retry {:max-attempts 3}
+                         (maps/map-lookup m key))]
+            (tu/assert-bytes-equal val result)))))))
+
+(deftest test-permission-errors
+  (testing "Permission error handling"
+    (mock/with-mock-failure :program-load {:errno :eperm :permanent true}
+      (tu/assert-throws-errno :eperm
+        (bpf/load-program some-program)))))
+
+;; ============================================================================
+;; BPF-Specific Assertions (Using Built-in + Custom)
 ;; ============================================================================
 
 (defn assert-map-value
-  "Assert map contains expected value"
-  [map-ref key expected]
-  (let [actual (bpf/map-lookup map-ref key)]
-    (is (= expected actual)
-        (format "Map value mismatch: expected %s, got %s" expected actual))))
+  "Assert map contains expected value at key"
+  [bpf-map key-bytes expected-bytes]
+  (let [actual (maps/map-lookup bpf-map key-bytes)]
+    (tu/assert-bytes-equal expected-bytes actual
+      (format "Map value mismatch for key %s" (vec key-bytes)))))
 
 (defn assert-map-contains
   "Assert map contains key"
-  [map-ref key]
-  (let [value (bpf/map-lookup map-ref key)]
-    (is (not (nil? value))
-        (format "Map should contain key %s" key))))
+  [bpf-map key-bytes]
+  (is (some? (maps/map-lookup bpf-map key-bytes))
+      (format "Map should contain key %s" (vec key-bytes))))
 
 (defn assert-map-empty
-  "Assert map is empty"
-  [map-ref]
-  (let [entries (bpf/map-get-all map-ref)]
-    (is (empty? entries)
-        "Map should be empty")))
+  "Assert map is empty (for hash maps)"
+  [bpf-map]
+  (let [first-key (maps/map-get-next-key bpf-map nil)]
+    (is (nil? first-key) "Map should be empty")))
 
 (defn assert-counter-incremented
   "Assert counter was incremented"
-  [map-ref key initial-value]
-  (let [new-value (bpf/map-lookup map-ref key)]
-    (is (> new-value initial-value)
-        (format "Counter should increase: was %d, now %d" initial-value new-value))))
+  [bpf-map key-bytes initial-value]
+  (let [actual-bytes (maps/map-lookup bpf-map key-bytes)
+        actual (tu/value->long actual-bytes)]
+    (is (> actual initial-value)
+        (format "Counter should increase: was %d, now %d" initial-value actual))))
 
 (defn assert-xdp-action
   "Assert XDP program returned expected action"
   [result expected-action]
-  (let [action-map {:pass 2 :drop 1 :aborted 0 :tx 3 :redirect 4}
+  (let [action-map {:aborted 0 :drop 1 :pass 2 :tx 3 :redirect 4}
         expected-code (get action-map expected-action)]
     (is (= expected-code (:return-value result))
         (format "Expected XDP action %s (%d), got %d"
                 expected-action expected-code (:return-value result)))))
 
-(defn assert-event-captured
-  "Assert event was captured in ring buffer"
-  [ring-buffer predicate]
-  (let [events (atom [])
-        _ (bpf/consume-ring-buffer ring-buffer
-                                   (fn [e] (swap! events conj e))
-                                   {:poll-timeout-ms 100})]
-    (is (some predicate @events)
-        "Expected event not found in ring buffer")))
-
 ;; ============================================================================
-;; Example Tests
+;; Example Tests Using Full Infrastructure
 ;; ============================================================================
 
-(deftest test-packet-counter-tcp
-  (testing "TCP packet increments TCP counter"
-    (let [prog (bpf/load-program packet-counter-program)
-          stats-map (get-in prog [:maps :stats])]
+(deftest test-packet-counter-mock
+  (testing "Packet counter logic in mock mode"
+    (tu/with-temp-map [stats {:type :array :key-size 4 :value-size 8 :max-entries 256}]
+      ;; Simulate packet processing
+      (let [tcp-key (tu/make-key 6)    ; TCP protocol
+            udp-key (tu/make-key 17)]  ; UDP protocol
 
-      ;; Initial state
-      (assert-map-value stats-map 6 0)  ; TCP counter = 0
+        ;; Initialize counters
+        (maps/map-update stats tcp-key (tu/make-value 0))
+        (maps/map-update stats udp-key (tu/make-value 0))
 
-      ;; Inject TCP packet
-      (let [packet (generate-ipv4-packet :protocol 6)
-            result (inject-xdp-packet prog packet)]
+        ;; Simulate 10 TCP packets
+        (dotimes [_ 10]
+          (let [current (tu/value->long (maps/map-lookup stats tcp-key))]
+            (maps/map-update stats tcp-key (tu/make-value (inc current)))))
 
-        ;; Should pass packet
-        (assert-xdp-action result :pass)
+        ;; Simulate 5 UDP packets
+        (dotimes [_ 5]
+          (let [current (tu/value->long (maps/map-lookup stats udp-key))]
+            (maps/map-update stats udp-key (tu/make-value (inc current)))))
 
-        ;; Should increment TCP counter
-        (assert-map-value stats-map 6 1))
+        ;; Verify counters
+        (is (= 10 (tu/value->long (maps/map-lookup stats tcp-key))))
+        (is (= 5 (tu/value->long (maps/map-lookup stats udp-key))))))))
 
-      (bpf/unload-program prog))))
+(deftest test-firewall-blacklist-mock
+  (testing "Firewall blacklist logic"
+    (tu/with-temp-map [blacklist {:type :hash :key-size 4 :value-size 4 :max-entries 1000}]
+      (let [blocked-ip (byte-array [192 168 1 100])
+            allowed-ip (byte-array [192 168 1 1])
+            block-marker (tu/make-value 1 4)]
 
-(deftest test-packet-counter-udp
-  (testing "UDP packet increments UDP counter"
-    (let [prog (bpf/load-program packet-counter-program)
-          stats-map (get-in prog [:maps :stats])]
+        ;; Add IP to blacklist
+        (maps/map-update blacklist blocked-ip block-marker)
 
-      ;; Inject UDP packet
-      (let [packet (generate-ipv4-packet :protocol 17)
-            result (inject-xdp-packet prog packet)]
-
-        (assert-xdp-action result :pass)
-        (assert-map-value stats-map 17 1))
-
-      (bpf/unload-program prog))))
-
-(deftest test-packet-counter-multiple-protocols
-  (testing "Multiple protocols tracked independently"
-    (let [prog (bpf/load-program packet-counter-program)
-          stats-map (get-in prog [:maps :stats])]
-
-      ;; Inject mixed traffic
-      (doseq [_ (range 10)]
-        (inject-xdp-packet prog (generate-ipv4-packet :protocol 6)))   ; TCP
-
-      (doseq [_ (range 5)]
-        (inject-xdp-packet prog (generate-ipv4-packet :protocol 17)))  ; UDP
-
-      ;; Verify counters
-      (assert-map-value stats-map 6 10)   ; TCP
-      (assert-map-value stats-map 17 5)   ; UDP
-
-      (bpf/unload-program prog))))
-
-(deftest test-process-monitor-captures-exec
-  (testing "Process exec events captured"
-    (let [prog (bpf/load-program process-monitor-program)
-          events-buf (get-in prog [:maps :events])]
-
-      ;; Inject exec event
-      (let [event (generate-process-event :comm "bash" :uid 0)]
-        (inject-tracepoint-event prog event))
-
-      ;; Verify event captured
-      (assert-event-captured
-        events-buf
-        (fn [e] (= "bash" (:comm e))))
-
-      (bpf/unload-program prog))))
-
-(deftest test-firewall-blocks-blacklisted-ip
-  (testing "Blacklisted IP addresses are dropped"
-    (let [prog (bpf/load-program firewall-program)
-          blacklist-map (get-in prog [:maps :blacklist])]
-
-      ;; Add IP to blacklist
-      (bpf/map-update! blacklist-map (ip->u32 "192.168.1.100") 1)
-
-      ;; Packet from blacklisted IP should be dropped
-      (let [packet (generate-ipv4-packet :src-ip "192.168.1.100")
-            result (inject-xdp-packet prog packet)]
-        (assert-xdp-action result :drop))
-
-      ;; Packet from allowed IP should pass
-      (let [packet (generate-ipv4-packet :src-ip "192.168.1.1")
-            result (inject-xdp-packet prog packet)]
-        (assert-xdp-action result :pass))
-
-      (bpf/unload-program prog))))
+        ;; Check lookups
+        (is (some? (maps/map-lookup blacklist blocked-ip))
+            "Blocked IP should be in blacklist")
+        (is (nil? (maps/map-lookup blacklist allowed-ip))
+            "Allowed IP should not be in blacklist")))))
 
 ;; ============================================================================
-;; Property-Based Testing
+;; Performance Testing Helpers (Using Built-in)
 ;; ============================================================================
 
-(deftest test-packet-counter-properties
-  (testing "Packet counter maintains invariants"
-    (let [prog (bpf/load-program packet-counter-program)
-          stats-map (get-in prog [:maps :stats])]
+(deftest test-map-performance
+  (testing "Map operation performance"
+    (tu/with-temp-map [m {:type :hash :key-size 4 :value-size 8 :max-entries 10000}]
 
-      ;; Property: Counter only increases
-      (dotimes [i 100]
-        (let [before (or (bpf/map-lookup stats-map 6) 0)
-              packet (generate-ipv4-packet :protocol 6)
-              _ (inject-xdp-packet prog packet)
-              after (bpf/map-lookup stats-map 6)]
+      ;; Benchmark insertions
+      (let [stats (tu/benchmark-op 1000
+                    (fn []
+                      (let [key (tu/random-key 4)
+                            val (tu/random-value 8)]
+                        (maps/map-update m key val))))]
 
-          (is (>= after before)
-              (format "Counter should not decrease: %d -> %d" before after))))
+        (println "\n=== Insert Performance ===")
+        (println (format "Min: %s" (tu/format-ns (:min stats))))
+        (println (format "Max: %s" (tu/format-ns (:max stats))))
+        (println (format "Mean: %s" (tu/format-ns (:mean stats))))
+        (println (format "Median: %s" (tu/format-ns (:median stats))))
 
-      ;; Property: Total events = sum of protocol counters
-      (let [total-injected 100
-            protocol-counts (map #(or (bpf/map-lookup stats-map %) 0)
-                                (range 0 256))
-            total-counted (reduce + protocol-counts)]
-
-        (is (= total-injected total-counted)
-            "Sum of protocol counters should equal total events"))
-
-      (bpf/unload-program prog))))
+        ;; Assert reasonable performance
+        (is (< (:mean stats) 1000000)  ; Less than 1ms average
+            "Insert should be sub-millisecond")))))
 
 ;; ============================================================================
-;; Edge Case Tests
+;; Testing Without Mock (Real BPF - Requires Capabilities)
 ;; ============================================================================
 
-(deftest test-malformed-packets
-  (testing "Handles malformed packets gracefully"
-    (let [prog (bpf/load-program packet-parser-program)]
+(deftest ^:integration test-real-bpf-map
+  (testing "Real BPF map operations"
+    (when-not (tu/has-bpf-capabilities?)
+      (println "  [SKIPPED] Requires CAP_BPF")
+      (is true)  ; Don't fail, just skip
+      (return))
 
-      ;; Too short
-      (let [packet (byte-array 10)
-            result (inject-xdp-packet prog packet)]
-        (is (#{:pass :drop} (xdp-action-from-code (:return-value result)))
-            "Should handle short packets"))
-
-      ;; Invalid EtherType
-      (let [packet (generate-ipv4-packet)
-            _ (aset-byte packet 12 (byte 0x99))  ; Invalid EtherType
-            result (inject-xdp-packet prog packet)]
-        (is (some? result) "Should handle invalid EtherType"))
-
-      ;; Zero-length payload
-      (let [packet (generate-ipv4-packet :payload-size 0)
-            result (inject-xdp-packet prog packet)]
-        (is (some? result) "Should handle zero-length payload"))
-
-      (bpf/unload-program prog))))
-
-(deftest test-boundary-conditions
-  (testing "Handles boundary conditions"
-    (let [prog (bpf/load-program rate-limiter-program)]
-
-      ;; Exactly at limit
-      (dotimes [_ 1000]  ; Assume limit is 1000/sec
-        (inject-xdp-packet prog (generate-ipv4-packet)))
-
-      ;; Next packet should be rate-limited
-      (let [result (inject-xdp-packet prog (generate-ipv4-packet))]
-        (assert-xdp-action result :drop))
-
-      (bpf/unload-program prog))))
+    ;; Real BPF test - runs only with capabilities
+    (let [m (maps/create-map :hash 100 4 8)]
+      (try
+        (let [key (tu/make-key 42)
+              val (tu/make-value 12345)]
+          (maps/map-update m key val)
+          (tu/assert-bytes-equal val (maps/map-lookup m key)))
+        (finally
+          (maps/close-map m))))))
 
 ;; ============================================================================
 ;; Test Coverage Analysis
 ;; ============================================================================
 
-(defn analyze-coverage
-  "Analyze which program paths were tested"
-  [program test-results]
-  (let [total-paths (count-program-paths program)
-        executed-paths (count-executed-paths test-results)
-        coverage (/ executed-paths (double total-paths))]
+(defn analyze-test-results
+  "Analyze test results and print summary"
+  [results]
+  (let [total (+ (:pass results 0) (:fail results 0) (:error results 0))
+        pass-rate (if (pos? total)
+                    (* 100.0 (/ (:pass results 0) total))
+                    0.0)]
 
-    (println "\n=== Test Coverage ===")
-    (println (format "Total paths: %d" total-paths))
-    (println (format "Executed paths: %d" executed-paths))
-    (println (format "Coverage: %.1f%%" (* coverage 100)))
+    (println "\n=== Test Summary ===")
+    (println (format "Total tests: %d" total))
+    (println (format "Passed: %d (%.1f%%)" (:pass results 0) pass-rate))
+    (println (format "Failed: %d" (:fail results 0)))
+    (println (format "Errors: %d" (:error results 0)))
 
-    (when (< coverage 0.8)
-      (println "\n⚠️  WARNING: Low test coverage (<80%)"))
+    (when (< pass-rate 100)
+      (println "\n⚠️  Some tests did not pass"))
 
-    coverage))
+    (zero? (+ (:fail results 0) (:error results 0)))))
 
 ;; ============================================================================
 ;; Test Suite Runner
@@ -438,17 +383,14 @@ Build a comprehensive unit testing framework for BPF programs that provides test
 (defn run-test-suite
   "Run comprehensive test suite"
   []
-  (println "=== BPF Unit Test Suite ===\n")
+  (println "=== BPF Unit Test Suite ===")
+  (println "Using clj-ebpf.mock for unprivileged testing\n")
 
   (let [start-time (System/currentTimeMillis)
         results (run-tests 'testing.unit-framework)
         duration (- (System/currentTimeMillis) start-time)]
 
-    (println "\n=== Summary ===")
-    (println (format "Tests run: %d" (+ (:pass results) (:fail results) (:error results))))
-    (println (format "Passed: %d" (:pass results)))
-    (println (format "Failed: %d" (:fail results)))
-    (println (format "Errors: %d" (:error results)))
+    (analyze-test-results results)
     (println (format "Duration: %dms" duration))
 
     (if (and (zero? (:fail results))
@@ -467,94 +409,138 @@ Build a comprehensive unit testing framework for BPF programs that provides test
 ## Test Organization
 
 ```
-tests/
+test/
+├── clj_ebpf/
+│   ├── mock.clj              ; Built-in mock syscall layer
+│   ├── test_utils.clj        ; Built-in test utilities
+│   ├── generators.clj        ; Property-based test generators
+│   └── properties.clj        ; Property-based test properties
 ├── unit/
-│   ├── packet_counter_test.clj
-│   ├── flow_tracker_test.clj
-│   ├── process_monitor_test.clj
-│   └── firewall_test.clj
-├── fixtures/
-│   ├── packets.clj          ; Packet generators
-│   ├── events.clj           ; Event generators
-│   └── assertions.clj       ; Custom assertions
-├── helpers/
-│   ├── bpf_runner.clj       ; BPF test runner
-│   └── coverage.clj         ; Coverage analysis
+│   ├── maps_test.clj         ; Map unit tests
+│   ├── programs_test.clj     ; Program tests
+│   └── dsl_test.clj          ; DSL tests
 └── integration/
-    └── ...
+    └── ...                   ; Integration tests (require CAP_BPF)
 ```
 
 ## Running Tests
 
 ```bash
-# Run all unit tests
-lein test :unit
+# Run all unit tests (uses mock, no CAP_BPF needed)
+clojure -M:test
 
-# Run specific test
-lein test :only testing.unit-framework/test-packet-counter-tcp
+# Run specific test namespace
+clojure -M:test -n testing.unit-framework
 
-# Run with coverage
-lein test-coverage
+# Run only mock-based tests
+clojure -M:test -i :unit
 
-# Run in watch mode
-lein test-refresh
+# Run integration tests (requires CAP_BPF)
+sudo clojure -M:test -i :integration
+
+# Run with test.check for property-based tests
+clojure -M:test:test-check
+```
+
+## Key Testing Patterns
+
+### Pattern 1: Mock-Based Unit Tests
+
+```clojure
+(use-fixtures :each tu/mock-fixture)
+
+(deftest test-map-logic
+  (tu/with-temp-map [m config]
+    ;; Test your logic here - no real BPF needed
+    ))
+```
+
+### Pattern 2: Conditional Real BPF Tests
+
+```clojure
+(deftest ^:integration test-real-bpf
+  (when-not (tu/has-bpf-capabilities?)
+    (tu/skip-without-capabilities)
+    (return))
+  ;; Real BPF test here
+  )
+```
+
+### Pattern 3: Failure Injection
+
+```clojure
+(deftest test-error-handling
+  (mock/with-mock-failure :map-lookup {:errno :eagain}
+    ;; Test that your code handles EAGAIN correctly
+    ))
+```
+
+### Pattern 4: Performance Benchmarking
+
+```clojure
+(deftest test-performance
+  (let [stats (tu/benchmark-op 1000 my-operation)]
+    (is (< (:mean stats) threshold))))
 ```
 
 ## Expected Output
 
 ```
 === BPF Unit Test Suite ===
+Using clj-ebpf.mock for unprivileged testing
 
 Testing testing.unit-framework
 
-Ran 8 tests containing 15 assertions.
+Ran 12 tests containing 28 assertions.
 0 failures, 0 errors.
 
-=== Test Coverage ===
-Total paths: 45
-Executed paths: 38
-Coverage: 84.4%
+=== Insert Performance ===
+Min: 1.23 µs
+Max: 45.67 µs
+Mean: 3.45 µs
+Median: 2.89 µs
 
-=== Summary ===
-Tests run: 8
-Passed: 8
+=== Test Summary ===
+Total tests: 12
+Passed: 12 (100.0%)
 Failed: 0
 Errors: 0
-Duration: 1234ms
+Duration: 234ms
 
 ✓ All tests passed!
 ```
 
 ## Best Practices
 
-1. **Test Small Units**: Test individual programs, not entire systems
-2. **Use Fixtures**: Setup/teardown for consistent state
-3. **Mock External Data**: Generate deterministic test data
-4. **Assert Explicitly**: Check exact values, not just "something happened"
-5. **Test Edge Cases**: Empty, max, invalid inputs
-6. **Measure Coverage**: Aim for 80%+ path coverage
-7. **Fast Tests**: Unit tests should run in milliseconds
-8. **Isolated Tests**: No dependencies between tests
+1. **Use Mock Mode**: Always use `tu/mock-fixture` for unit tests
+2. **Test Without Privileges**: Most tests should run without CAP_BPF
+3. **Use Built-in Utilities**: Leverage `tu/make-key`, `tu/make-value`, etc.
+4. **Assert Explicitly**: Use `tu/assert-bytes-equal` for byte comparisons
+5. **Test Edge Cases**: Empty maps, full maps, invalid inputs
+6. **Inject Failures**: Use `mock/with-mock-failure` for error path testing
+7. **Benchmark Performance**: Use `tu/benchmark-op` for performance tests
+8. **Tag Integration Tests**: Mark tests requiring CAP_BPF with `^:integration`
 
 ## Challenges
 
-1. **Concurrent Testing**: Test per-CPU map behavior
-2. **Performance Tests**: Assert execution time constraints
-3. **Verifier Tests**: Verify programs pass verifier
-4. **Negative Tests**: Ensure invalid programs are rejected
-5. **Regression Suite**: Build comprehensive regression tests
+1. **Concurrent Testing**: Test per-CPU map behavior with multiple threads
+2. **Property-Based Tests**: Use test.check with `generators.clj`
+3. **Error Path Coverage**: Inject all errno values
+4. **Performance Regression**: Track performance across commits
+5. **Integration Suite**: Build comprehensive real-BPF tests
 
 ## Key Takeaways
 
-- Unit tests catch bugs early
-- Mock data enables deterministic testing
-- BPF-specific assertions simplify tests
-- Test coverage reveals untested paths
-- Fast, isolated tests enable rapid development
-- Fixtures ensure consistent test environment
+- clj-ebpf provides `mock.clj` and `test-utils.clj` for testing
+- Mock mode enables testing without CAP_BPF privileges
+- Use fixtures for consistent test setup/teardown
+- Failure injection helps test error handling
+- Built-in utilities simplify common test patterns
+- Separate unit tests (mock) from integration tests (real BPF)
 
 ## References
 
+- [clj-ebpf.mock Documentation](../../api/mock.md)
+- [clj-ebpf.test-utils Documentation](../../api/test-utils.md)
 - [Clojure Testing](https://clojure.org/guides/deps_and_cli#testing)
-- [BPF Program Testing](https://www.kernel.org/doc/html/latest/bpf/bpf_design_QA.html)
 - [Property-Based Testing](https://github.com/clojure/test.check)

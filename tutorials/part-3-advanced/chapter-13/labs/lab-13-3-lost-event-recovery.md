@@ -74,7 +74,39 @@ Build a robust event processing system that detects lost events, logs gaps, and 
 
 ```clojure
 (ns event-processing.lost-event-recovery
-  (:require [clj-ebpf.core :as bpf]))
+  "Lost event detection and recovery using clj-ebpf's backpressure consumer"
+  (:require [clj-ebpf.core :as bpf]
+            [clj-ebpf.maps :as maps]
+            [clj-ebpf.events :as events]
+            [clj-ebpf.errors :as errors]))
+
+;; ============================================================================
+;; Built-in Backpressure Support
+;; ============================================================================
+
+;; clj-ebpf provides a built-in backpressure consumer in clj-ebpf.events:
+;;
+;; - events/create-backpressure-consumer - Create consumer with flow control
+;; - events/start-backpressure-consumer  - Start processing
+;; - events/stop-backpressure-consumer   - Stop and cleanup
+;; - events/get-backpressure-stats       - Get detailed statistics
+;; - events/backpressure-healthy?        - Check consumer health
+;; - events/with-backpressure-consumer   - Convenient macro for auto-cleanup
+
+;; Example using built-in backpressure:
+(comment
+  ;; Create and use backpressure consumer
+  (events/with-backpressure-consumer
+    [consumer {:map ringbuf-map
+               :queue-size 10000
+               :handler (fn [event] (process-event event))}]
+
+    ;; Process events for a while
+    (Thread/sleep 60000)
+
+    ;; Check health
+    (println "Stats:" (events/get-backpressure-stats consumer))
+    (println "Healthy?" (events/backpressure-healthy? consumer))))
 
 ;; ============================================================================
 ;; Configuration
@@ -413,38 +445,81 @@ Build a robust event processing system that detects lost events, logs gaps, and 
                    start-seq end-seq (- end-seq start-seq))))
 
 ;; ============================================================================
-;; Backpressure Management
+;; Backpressure Management (Using Built-in events.clj)
 ;; ============================================================================
 
-(defn monitor-buffer-pressure
-  "Monitor buffer usage and apply backpressure"
+;; The clj-ebpf.events module provides built-in backpressure management.
+;; Here's how to use it instead of manual backpressure:
+
+(defn create-managed-consumer
+  "Create a backpressure-managed consumer using events.clj"
+  [ringbuf-map handler-fn]
+  (events/create-backpressure-consumer
+    {:map ringbuf-map
+     :queue-size 10000           ; Internal queue size
+     :handler handler-fn         ; Event handler function
+     :poll-timeout-ms 100}))     ; Poll timeout
+
+(defn process-with-backpressure
+  "Process events with automatic backpressure handling"
+  [ringbuf-map]
+  (events/with-backpressure-consumer
+    [consumer {:map ringbuf-map
+               :queue-size 10000
+               :handler (fn [event]
+                         (let [parsed (parse-sequenced-event event)]
+                           (process-event-with-gap-detection
+                             (create-consumer-state)
+                             parsed)))}]
+
+    ;; Monitor health while processing
+    (loop []
+      (Thread/sleep 5000)
+
+      (let [stats (events/get-backpressure-stats consumer)]
+        (println "\n=== Backpressure Stats ===")
+        (println (format "Events processed: %d" (:events-processed stats)))
+        (println (format "Events dropped: %d" (:events-dropped stats)))
+        (println (format "Queue size: %d" (:queue-size stats)))
+        (println (format "Drop rate: %.2f%%" (* 100.0 (:drop-rate stats))))
+
+        ;; Check health
+        (when-not (events/backpressure-healthy? consumer
+                    :max-drop-rate 0.05
+                    :max-queue-utilization 0.9)
+          (println "⚠️  Consumer unhealthy!")))
+
+      (recur))))
+
+;; Legacy manual backpressure (for comparison)
+(defn monitor-buffer-pressure-manual
+  "Monitor buffer usage and apply backpressure (manual approach)"
   []
   (loop []
-    (Thread/sleep 100)  ; Check every 100ms
+    (Thread/sleep 100)
 
-    ;; Get buffer stats (pseudo-code, actual implementation varies)
     (let [buffer-usage (get-buffer-usage event-buffer)]
-
       (cond
-        ;; High pressure: Enable backpressure
         (>= buffer-usage BACKPRESSURE_THRESHOLD)
         (do
-          (bpf/map-update! backpressure-state 0 1)
-          (log/warn "Backpressure ENABLED" {:usage buffer-usage}))
+          (maps/map-update backpressure-state
+                          (byte-array [0 0 0 0])
+                          (byte-array [1 0 0 0]))
+          (println "Backpressure ENABLED"))
 
-        ;; Low pressure: Disable backpressure
         (< buffer-usage 0.5)
         (do
-          (bpf/map-update! backpressure-state 0 0)
-          (log/info "Backpressure DISABLED" {:usage buffer-usage}))))
+          (maps/map-update backpressure-state
+                          (byte-array [0 0 0 0])
+                          (byte-array [0 0 0 0]))
+          (println "Backpressure DISABLED"))))
 
     (recur)))
 
 (defn get-buffer-usage
   "Get current buffer usage (0.0-1.0)"
   [ring-buffer]
-  ;; This would use actual libbpf API to get ring buffer stats
-  ;; Simplified here
+  ;; In practice, use events/get-backpressure-stats for accurate info
   0.5)
 
 ;; ============================================================================
@@ -552,9 +627,40 @@ Build a robust event processing system that detects lost events, logs gaps, and 
 
 1. **Sequence Numbers** - Detect gaps in event stream
 2. **Drop Logging** - Separate buffer for recording drops
-3. **Backpressure** - Reduce event rate when buffer fills
+3. **Backpressure** - Reduce event rate when buffer fills (use `clj-ebpf.events`)
 4. **Gap Recovery** - Attempt to fill gaps from alternative sources
-5. **Health Monitoring** - Track loss rates and alert
+5. **Health Monitoring** - Track loss rates using `events/get-backpressure-stats`
+
+## Using Built-in Backpressure Consumer
+
+clj-ebpf provides a complete backpressure solution in `clj-ebpf.events`:
+
+```clojure
+(require '[clj-ebpf.events :as events])
+
+;; Simple usage with macro
+(events/with-backpressure-consumer
+  [consumer {:map ringbuf-map
+             :queue-size 10000
+             :handler process-fn}]
+
+  ;; Consumer runs until block exits
+  (Thread/sleep 60000)
+
+  ;; Get stats anytime
+  (events/get-backpressure-stats consumer))
+
+;; Manual lifecycle control
+(let [consumer (events/create-backpressure-consumer opts)]
+  (events/start-backpressure-consumer consumer)
+  ;; ... processing ...
+  (events/stop-backpressure-consumer consumer))
+
+;; Health checking
+(events/backpressure-healthy? consumer
+  :max-drop-rate 0.05           ; 5% max drop rate
+  :max-queue-utilization 0.9)   ; 90% max queue fill
+```
 
 ## Expected Behavior
 
@@ -590,12 +696,24 @@ Events: 1M, Lost: 45, Gaps: 1, Loss Rate: 0.004%
 - Event loss is inevitable under extreme load
 - Detection is critical - sequence numbers are essential
 - Log drops separately for debugging
-- Backpressure prevents catastrophic loss
+- Use `clj-ebpf.events` backpressure consumer for automatic flow control
+- `events/with-backpressure-consumer` provides convenient lifecycle management
+- `events/get-backpressure-stats` gives detailed statistics
+- `events/backpressure-healthy?` enables automated health checks
 - Recovery depends on use case
 - Monitor health metrics continuously
 
+## clj-ebpf Modules Used
+
+| Module | Purpose |
+|--------|---------|
+| `clj-ebpf.events` | Backpressure consumer, ring buffer handling |
+| `clj-ebpf.maps` | Map operations for sequence counters |
+| `clj-ebpf.errors` | Structured error handling |
+
 ## References
 
+- [clj-ebpf.events Documentation](../../api/events.md)
 - [TCP Sequence Numbers](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#Sequence_numbers)
 - [Gap Detection](https://www.kernel.org/doc/html/latest/trace/events.html)
 - [Backpressure](https://mechanical-sympathy.blogspot.com/2012/05/apply-back-pressure-when-overloaded.html)

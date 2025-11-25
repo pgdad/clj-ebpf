@@ -200,6 +200,131 @@ Deploy and operate eBPF applications in production environments.
 
 ---
 
+## 🆕 New clj-ebpf Features
+
+The clj-ebpf library includes several powerful features for development and testing:
+
+### Multi-Architecture Support (`clj-ebpf.arch`)
+
+Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:
+
+```clojure
+(require '[clj-ebpf.arch :as arch])
+
+arch/current-arch      ; => :x86_64
+arch/arch-name         ; => "x86-64 (AMD64)"
+(arch/get-syscall-nr :bpf)  ; => 321 (platform-specific)
+```
+
+### Structured Error Handling (`clj-ebpf.errors`)
+
+Rich error types with automatic retry and diagnostics:
+
+```clojure
+(require '[clj-ebpf.errors :as errors])
+
+;; Error classification
+(errors/verifier-error? e)    ; Verifier rejection
+(errors/permission-error? e)  ; Permission issues
+(errors/transient-error? e)   ; Retriable errors
+
+;; Automatic retry on transient errors
+(errors/with-retry {:max-retries 3}
+  (potentially-flaky-operation))
+
+;; Formatted error output
+(errors/format-error e)       ; Multi-line diagnostic
+```
+
+### Mock Syscall Layer (`clj-ebpf.mock`)
+
+Test BPF logic without CAP_BPF privileges:
+
+```clojure
+(require '[clj-ebpf.mock :as mock])
+
+(mock/with-mock-bpf
+  ;; All BPF operations use in-memory simulation
+  (let [m (maps/create-map :hash 100 4 8)]
+    (maps/map-update m key val)
+    (maps/map-lookup m key)))
+
+;; Inject failures for testing error handling
+(mock/with-mock-failure :map-lookup {:errno :eagain})
+```
+
+### Test Utilities (`clj-ebpf.test-utils`)
+
+Fixtures, data generators, and assertions for testing:
+
+```clojure
+(require '[clj-ebpf.test-utils :as tu])
+
+;; Check capabilities
+(tu/has-bpf-capabilities?)
+
+;; Test fixtures
+(use-fixtures :each tu/mock-fixture)
+
+;; Data generators
+(tu/make-key 42)              ; Byte array key
+(tu/make-value 100)           ; Byte array value
+(tu/build-test-packet :protocol :tcp)  ; Network packet
+
+;; Assertions
+(tu/assert-bytes-equal expected actual)
+(tu/assert-throws-errno :eperm ...)
+
+;; Performance benchmarking
+(tu/benchmark-op 1000 my-operation)
+```
+
+### DSL Submodules
+
+Focused imports for cleaner code:
+
+```clojure
+;; Instead of everything from core:
+(:require [clj-ebpf.core :as bpf])
+
+;; Import specific DSL modules:
+(:require [clj-ebpf.dsl.core :as dsl]     ; Unified DSL
+          [clj-ebpf.dsl.alu :as alu]      ; ALU operations
+          [clj-ebpf.dsl.mem :as mem]      ; Memory operations
+          [clj-ebpf.dsl.jump :as jmp])    ; Jump/control flow
+```
+
+### Backpressure Consumer (`clj-ebpf.events`)
+
+Flow control for high-throughput event processing:
+
+```clojure
+(require '[clj-ebpf.events :as events])
+
+(events/with-backpressure-consumer
+  [consumer {:map ringbuf-map
+             :queue-size 10000
+             :handler process-fn}]
+
+  ;; Monitor health
+  (events/get-backpressure-stats consumer)
+  (events/backpressure-healthy? consumer))
+```
+
+### Property-Based Testing
+
+Generators and properties for comprehensive testing:
+
+```clojure
+;; In test/clj_ebpf/generators.clj
+;; Generate valid BPF instructions, map configs, etc.
+
+;; In test/clj_ebpf/properties.clj
+;; Property-based tests for map operations
+```
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
