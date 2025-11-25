@@ -1996,6 +1996,408 @@
   [(mov-reg gid-reg uid-gid-reg)
    (rsh gid-reg 32)])
 
+;; ============================================================================
+;; Atomic Operations
+;; ============================================================================
+;;
+;; BPF supports atomic operations on memory for thread-safe updates.
+;; These are essential for per-CPU counters and lock-free data structures.
+;;
+;; Atomic operations use STX instruction class with ATOMIC mode (0xc0).
+;; The operation type is encoded in the immediate field.
+
+(def ^:private atomic-op
+  "Atomic operation codes (encoded in immediate field)"
+  {:add   0x00   ; atomic add
+   :or    0x40   ; atomic or
+   :and   0x50   ; atomic and
+   :xor   0xa0   ; atomic xor
+   :xchg  0xe1   ; atomic exchange
+   :cmpxchg 0xf1 ; atomic compare-and-exchange
+   })
+
+(def ^:private atomic-fetch-flag
+  "Flag to indicate fetch variant (returns old value)"
+  0x01)
+
+(defn- build-atomic-instruction
+  "Build an atomic BPF instruction.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Destination register (memory address base)
+  - src: Source register (value to use in operation)
+  - offset: Memory offset from dst
+  - op: Atomic operation keyword
+  - fetch?: Whether to fetch old value into src
+
+  Returns byte array (8 bytes)"
+  [size dst src offset op fetch?]
+  (let [size-bits (get load-store-size size)
+        opcode (bit-or size-bits
+                       (get load-store-mode :atomic)
+                       (get instruction-class :stx))
+        dst-reg (resolve-register dst)
+        src-reg (resolve-register src)
+        imm-op (get atomic-op op)
+        imm (if fetch?
+              (bit-or imm-op atomic-fetch-flag)
+              imm-op)]
+    (build-instruction opcode dst-reg src-reg offset imm)))
+
+;; === Basic Atomic Operations ===
+
+(defn atomic-add
+  "Atomic add to memory location.
+
+  Performs: *dst[offset] += src
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to add
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-add :dw :r1 :r2 0)  ; *(u64*)(r1+0) += r2"
+  ([size dst src]
+   (atomic-add size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :add false)))
+
+(defn atomic-fetch-add
+  "Atomic fetch-and-add: returns old value, then adds.
+
+  Performs: src = *dst[offset]; *dst[offset] += src
+  (Note: src receives the OLD value, not the new value)
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to add (receives old value)
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-fetch-add :dw :r1 :r2 0)  ; r2 = *(r1+0); *(r1+0) += old_r2"
+  ([size dst src]
+   (atomic-fetch-add size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :add true)))
+
+(defn atomic-or
+  "Atomic OR to memory location.
+
+  Performs: *dst[offset] |= src
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to OR
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-or :dw :r1 :r2 0)  ; *(u64*)(r1+0) |= r2"
+  ([size dst src]
+   (atomic-or size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :or false)))
+
+(defn atomic-fetch-or
+  "Atomic fetch-and-OR: returns old value, then ORs.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to OR (receives old value)
+  - offset: Memory offset (default 0)"
+  ([size dst src]
+   (atomic-fetch-or size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :or true)))
+
+(defn atomic-and
+  "Atomic AND to memory location.
+
+  Performs: *dst[offset] &= src
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to AND
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-and :dw :r1 :r2 0)  ; *(u64*)(r1+0) &= r2"
+  ([size dst src]
+   (atomic-and size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :and false)))
+
+(defn atomic-fetch-and
+  "Atomic fetch-and-AND: returns old value, then ANDs.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to AND (receives old value)
+  - offset: Memory offset (default 0)"
+  ([size dst src]
+   (atomic-fetch-and size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :and true)))
+
+(defn atomic-xor
+  "Atomic XOR to memory location.
+
+  Performs: *dst[offset] ^= src
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to XOR
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-xor :dw :r1 :r2 0)  ; *(u64*)(r1+0) ^= r2"
+  ([size dst src]
+   (atomic-xor size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :xor false)))
+
+(defn atomic-fetch-xor
+  "Atomic fetch-and-XOR: returns old value, then XORs.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing value to XOR (receives old value)
+  - offset: Memory offset (default 0)"
+  ([size dst src]
+   (atomic-fetch-xor size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :xor true)))
+
+(defn atomic-xchg
+  "Atomic exchange: swap register value with memory value.
+
+  Performs: src = xchg(*dst[offset], src)
+  The old memory value is placed in src, and src's old value
+  is written to memory.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register to exchange with memory
+  - offset: Memory offset (default 0)
+
+  Example:
+    (atomic-xchg :dw :r1 :r2 0)  ; r2 <=> *(r1+0)"
+  ([size dst src]
+   (atomic-xchg size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :xchg false)))
+
+(defn atomic-cmpxchg
+  "Atomic compare-and-exchange (CAS).
+
+  Performs:
+  - If *dst[offset] == r0, then *dst[offset] = src
+  - r0 receives the original value of *dst[offset]
+
+  Note: r0 is implicitly used as the comparison value.
+
+  Parameters:
+  - size: :w (32-bit) or :dw (64-bit)
+  - dst: Register containing memory address
+  - src: Register containing new value to write if comparison succeeds
+  - offset: Memory offset (default 0)
+
+  Example:
+    ;; Compare-and-swap pattern:
+    (mov :r0 expected-value)
+    (mov :r2 new-value)
+    (atomic-cmpxchg :dw :r1 :r2 0)
+    ;; r0 now contains original value
+    ;; Memory updated only if original == expected-value"
+  ([size dst src]
+   (atomic-cmpxchg size dst src 0))
+  ([size dst src offset]
+   (build-atomic-instruction size dst src offset :cmpxchg false)))
+
+;; === High-Level Atomic Patterns ===
+
+(defn atomic-increment
+  "Generate code to atomically increment a counter.
+
+  Uses atomic-fetch-add with value 1.
+
+  Parameters:
+  - addr-reg: Register containing counter address
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Example:
+    (atomic-increment :r1 0)  ; (*r1)++ atomically"
+  ([addr-reg]
+   (atomic-increment addr-reg 0))
+  ([addr-reg offset]
+   [(mov :r3 1)  ; Use r3 as temp for increment value
+    (atomic-add :dw addr-reg :r3 offset)]))
+
+(defn atomic-decrement
+  "Generate code to atomically decrement a counter.
+
+  Uses atomic-add with value -1.
+
+  Parameters:
+  - addr-reg: Register containing counter address
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Example:
+    (atomic-decrement :r1 0)  ; (*r1)-- atomically"
+  ([addr-reg]
+   (atomic-decrement addr-reg 0))
+  ([addr-reg offset]
+   [(mov :r3 -1)  ; Use r3 as temp
+    (atomic-add :dw addr-reg :r3 offset)]))
+
+(defn atomic-set-bit
+  "Generate code to atomically set a bit.
+
+  Uses atomic-or to set the specified bit.
+
+  Parameters:
+  - addr-reg: Register containing memory address
+  - bit: Bit number to set (0-63)
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Example:
+    (atomic-set-bit :r1 5 0)  ; Set bit 5 in *r1"
+  ([addr-reg bit]
+   (atomic-set-bit addr-reg bit 0))
+  ([addr-reg bit offset]
+   [(mov :r3 (bit-shift-left 1 bit))
+    (atomic-or :dw addr-reg :r3 offset)]))
+
+(defn atomic-clear-bit
+  "Generate code to atomically clear a bit.
+
+  Uses atomic-and with inverted bit mask.
+
+  Parameters:
+  - addr-reg: Register containing memory address
+  - bit: Bit number to clear (0-63)
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Example:
+    (atomic-clear-bit :r1 5 0)  ; Clear bit 5 in *r1"
+  ([addr-reg bit]
+   (atomic-clear-bit addr-reg bit 0))
+  ([addr-reg bit offset]
+   [(mov :r3 (bit-not (bit-shift-left 1 bit)))
+    (atomic-and :dw addr-reg :r3 offset)]))
+
+(defn atomic-toggle-bit
+  "Generate code to atomically toggle (flip) a bit.
+
+  Uses atomic-xor with the bit mask.
+
+  Parameters:
+  - addr-reg: Register containing memory address
+  - bit: Bit number to toggle (0-63)
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Example:
+    (atomic-toggle-bit :r1 5 0)  ; Toggle bit 5 in *r1"
+  ([addr-reg bit]
+   (atomic-toggle-bit addr-reg bit 0))
+  ([addr-reg bit offset]
+   [(mov :r3 (bit-shift-left 1 bit))
+    (atomic-xor :dw addr-reg :r3 offset)]))
+
+(defn cas-loop
+  "Generate a compare-and-swap loop pattern.
+
+  Attempts to atomically update a value from old to new.
+  Retries if another CPU modified the value.
+
+  Parameters:
+  - addr-reg: Register containing memory address
+  - expected-reg: Register containing expected old value
+  - new-reg: Register containing new value to write
+  - retry-offset: Jump offset to retry location (negative)
+  - offset: Memory offset (default 0)
+
+  Returns instruction sequence.
+
+  Note: This is a template - actual implementation may need
+  adjustment based on specific use case.
+
+  Example:
+    ;; Load current value into r6
+    (ldx :dw :r6 :r1 0)
+    ;; Prepare expected and new values
+    (mov-reg :r0 :r6)      ; r0 = expected
+    (add-reg :r2 :r6)      ; r2 = r6 + delta = new value
+    ;; CAS
+    (atomic-cmpxchg :dw :r1 :r2 0)
+    ;; r0 now has original, compare with expected
+    (jmp-reg :jne :r0 :r6 retry-offset)  ; retry if changed"
+  ([addr-reg expected-reg new-reg retry-offset]
+   (cas-loop addr-reg expected-reg new-reg retry-offset 0))
+  ([addr-reg expected-reg new-reg retry-offset offset]
+   [;; Move expected value to r0 (required for cmpxchg)
+    (mov-reg :r0 expected-reg)
+    ;; Perform CAS
+    (atomic-cmpxchg :dw addr-reg new-reg offset)
+    ;; Compare r0 (old value) with expected
+    (jmp-reg :jne :r0 expected-reg retry-offset)]))
+
+(comment
+  "Atomic Operations Usage Examples"
+
+  ;; Example 1: Simple counter increment
+  (assemble
+    [(mov-reg :r1 :r10)     ; r1 = frame pointer (stack)
+     (add :r1 -8)           ; Point to counter on stack
+     (atomic-increment :r1)
+     (exit-insn)])
+
+  ;; Example 2: Set a flag atomically
+  (assemble
+    [(ldx :dw :r1 :r6 0)    ; Load address from context
+     (atomic-set-bit :r1 0)  ; Set bit 0 (flag enabled)
+     (exit-insn)])
+
+  ;; Example 3: Compare-and-swap to update if unchanged
+  (assemble
+    [(ldx :dw :r1 :r6 0)       ; r1 = address
+     (ldx :dw :r6 :r1 0)       ; r6 = current value
+     (mov-reg :r0 :r6)         ; r0 = expected (current)
+     (mov :r2 42)              ; r2 = new value
+     (atomic-cmpxchg :dw :r1 :r2 0)  ; Try to swap
+     ;; r0 now contains what was actually there
+     ;; If r0 == r6, swap succeeded; otherwise retry needed
+     (exit-insn)])
+
+  ;; Example 4: Atomic fetch-and-add for statistics
+  (assemble
+    [(ldx :dw :r1 :r6 0)       ; r1 = stats address
+     (mov :r2 1)               ; Increment by 1
+     (atomic-fetch-add :dw :r1 :r2 0)
+     ;; r2 now contains the old count
+     (mov-reg :r0 :r2)         ; Return old count
+     (exit-insn)]))
+
 (comment
   "Helper Pattern Usage Examples"
 

@@ -1,9 +1,11 @@
 (ns clj-ebpf.constants
-  "BPF constants and enumerations from linux/bpf.h")
+  "BPF constants and enumerations from linux/bpf.h"
+  (:require [clj-ebpf.arch :as arch]))
 
-;; Syscall numbers (x86_64)
-(def ^:const BPF_SYSCALL_NR 321)
-(def ^:const PERF_EVENT_OPEN_SYSCALL_NR 298)
+;; Syscall numbers - now architecture-aware via arch module
+;; These are kept for backwards compatibility but delegate to arch module
+(def BPF_SYSCALL_NR @arch/BPF_SYSCALL_NR)
+(def PERF_EVENT_OPEN_SYSCALL_NR @arch/PERF_EVENT_OPEN_SYSCALL_NR)
 
 ;; BPF commands
 (def bpf-cmd
@@ -341,25 +343,148 @@
    :query-bpf 0x240a
    :modify-attributes 0x240b})
 
-;; Error codes
+;; Error codes - comprehensive POSIX errno values
 (def errno
-  {:perm 1          ; Operation not permitted
-   :noent 2         ; No such file or directory
-   :intr 4          ; Interrupted system call
-   :io 5            ; I/O error
-   :badf 9          ; Bad file descriptor
-   :again 11        ; Try again / Resource temporarily unavailable
-   :nomem 12        ; Out of memory
-   :acces 13        ; Permission denied
-   :fault 14        ; Bad address
-   :busy 16         ; Device or resource busy
-   :exist 17        ; File exists
-   :nodev 19        ; No such device
-   :inval 22        ; Invalid argument
-   :nospc 28        ; No space left on device
-   :range 34        ; Math result not representable
-   :nosys 38        ; Function not implemented
-   :notsup 95})     ; Operation not supported
+  {:eperm 1            ; Operation not permitted
+   :enoent 2           ; No such file or directory
+   :esrch 3            ; No such process
+   :eintr 4            ; Interrupted system call
+   :eio 5              ; I/O error
+   :enxio 6            ; No such device or address
+   :e2big 7            ; Argument list too long
+   :enoexec 8          ; Exec format error
+   :ebadf 9            ; Bad file descriptor
+   :echild 10          ; No child processes
+   :eagain 11          ; Try again / Resource temporarily unavailable
+   :enomem 12          ; Out of memory
+   :eacces 13          ; Permission denied
+   :efault 14          ; Bad address
+   :enotblk 15         ; Block device required
+   :ebusy 16           ; Device or resource busy
+   :eexist 17          ; File exists
+   :exdev 18           ; Cross-device link
+   :enodev 19          ; No such device
+   :enotdir 20         ; Not a directory
+   :eisdir 21          ; Is a directory
+   :einval 22          ; Invalid argument
+   :enfile 23          ; File table overflow
+   :emfile 24          ; Too many open files
+   :enotty 25          ; Not a typewriter
+   :etxtbsy 26         ; Text file busy
+   :efbig 27           ; File too large
+   :enospc 28          ; No space left on device
+   :espipe 29          ; Illegal seek
+   :erofs 30           ; Read-only file system
+   :emlink 31          ; Too many links
+   :epipe 32           ; Broken pipe
+   :edom 33            ; Math argument out of domain
+   :erange 34          ; Math result not representable
+   :edeadlk 35         ; Resource deadlock would occur
+   :enametoolong 36    ; File name too long
+   :enolck 37          ; No record locks available
+   :enosys 38          ; Function not implemented
+   :enotempty 39       ; Directory not empty
+   :eloop 40           ; Too many symbolic links
+   :ewouldblock 11     ; Same as EAGAIN
+   :enomsg 42          ; No message of desired type
+   :eidrm 43           ; Identifier removed
+   :echrng 44          ; Channel number out of range
+   :el2nsync 45        ; Level 2 not synchronized
+   :el3hlt 46          ; Level 3 halted
+   :el3rst 47          ; Level 3 reset
+   :elnrng 48          ; Link number out of range
+   :eunatch 49         ; Protocol driver not attached
+   :enocsi 50          ; No CSI structure available
+   :el2hlt 51          ; Level 2 halted
+   :ebade 52           ; Invalid exchange
+   :ebadr 53           ; Invalid request descriptor
+   :exfull 54          ; Exchange full
+   :enoano 55          ; No anode
+   :ebadrqc 56         ; Invalid request code
+   :ebadslt 57         ; Invalid slot
+   :edeadlock 35       ; Same as EDEADLK
+   :ebfont 59          ; Bad font file format
+   :enostr 60          ; Device not a stream
+   :enodata 61         ; No data available
+   :etime 62           ; Timer expired
+   :enosr 63           ; Out of streams resources
+   :enonet 64          ; Machine is not on the network
+   :enopkg 65          ; Package not installed
+   :eremote 66         ; Object is remote
+   :enolink 67         ; Link has been severed
+   :eadv 68            ; Advertise error
+   :esrmnt 69          ; Srmount error
+   :ecomm 70           ; Communication error on send
+   :eproto 71          ; Protocol error
+   :emultihop 72       ; Multihop attempted
+   :edotdot 73         ; RFS specific error
+   :ebadmsg 74         ; Not a data message
+   :eoverflow 75       ; Value too large for defined data type
+   :enotuniq 76        ; Name not unique on network
+   :ebadfd 77          ; File descriptor in bad state
+   :eremchg 78         ; Remote address changed
+   :elibacc 79         ; Can not access a needed shared library
+   :elibbad 80         ; Accessing a corrupted shared library
+   :elibscn 81         ; .lib section in a.out corrupted
+   :elibmax 82         ; Attempting to link in too many shared libraries
+   :elibexec 83        ; Cannot exec a shared library directly
+   :eilseq 84          ; Illegal byte sequence
+   :erestart 85        ; Interrupted system call should be restarted
+   :estrpipe 86        ; Streams pipe error
+   :eusers 87          ; Too many users
+   :enotsock 88        ; Socket operation on non-socket
+   :edestaddrreq 89    ; Destination address required
+   :emsgsize 90        ; Message too long
+   :eprototype 91      ; Protocol wrong type for socket
+   :enoprotoopt 92     ; Protocol not available
+   :eprotonosupport 93 ; Protocol not supported
+   :esocktnosupport 94 ; Socket type not supported
+   :eopnotsupp 95      ; Operation not supported on transport endpoint
+   :enotsup 95         ; Operation not supported (alias)
+   :epfnosupport 96    ; Protocol family not supported
+   :eafnosupport 97    ; Address family not supported by protocol
+   :eaddrinuse 98      ; Address already in use
+   :eaddrnotavail 99   ; Cannot assign requested address
+   :enetdown 100       ; Network is down
+   :enetunreach 101    ; Network is unreachable
+   :enetreset 102      ; Network dropped connection because of reset
+   :econnaborted 103   ; Software caused connection abort
+   :econnreset 104     ; Connection reset by peer
+   :enobufs 105        ; No buffer space available
+   :eisconn 106        ; Transport endpoint is already connected
+   :enotconn 107       ; Transport endpoint is not connected
+   :eshutdown 108      ; Cannot send after transport endpoint shutdown
+   :etoomanyrefs 109   ; Too many references: cannot splice
+   :etimedout 110      ; Connection timed out
+   :econnrefused 111   ; Connection refused
+   :ehostdown 112      ; Host is down
+   :ehostunreach 113   ; No route to host
+   :ealready 114       ; Operation already in progress
+   :einprogress 115    ; Operation now in progress
+   :estale 116         ; Stale file handle
+   :euclean 117        ; Structure needs cleaning
+   :enotnam 118        ; Not a XENIX named type file
+   :enavail 119        ; No XENIX semaphores available
+   :eisnam 120         ; Is a named type file
+   :eremoteio 121      ; Remote I/O error
+   :edquot 122         ; Quota exceeded
+   :enomedium 123      ; No medium found
+   :emediumtype 124    ; Wrong medium type
+   :ecanceled 125      ; Operation Canceled
+   :enokey 126         ; Required key not available
+   :ekeyexpired 127    ; Key has expired
+   :ekeyrevoked 128    ; Key has been revoked
+   :ekeyrejected 129   ; Key was rejected by service
+   :eownerdead 130     ; Owner died
+   :enotrecoverable 131 ; State not recoverable
+   :erfkill 132        ; Operation not possible due to RF-kill
+   :ehwpoison 133      ; Memory page has hardware error
+   ;; BPF-specific error (kernel 5.x+)
+   :enotsupp 524})     ; Operation not supported (BPF specific)
+
+;; Reverse mapping: errno number -> keyword
+(def errno-num->keyword
+  (into {} (map (fn [[k v]] [v k]) errno)))
 
 ;; Maximum sizes
 (def ^:const BPF_OBJ_NAME_LEN 16)

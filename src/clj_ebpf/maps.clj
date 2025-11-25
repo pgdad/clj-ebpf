@@ -197,14 +197,27 @@
 ;; Higher-level map operations
 
 (defn map-keys
-  "Get all keys from map as a lazy sequence"
+  "Get all keys from map as a lazy sequence.
+
+   The sequence is generated on-demand using BPF's get_next_key syscall,
+   making it memory-efficient for large maps.
+
+   Example:
+   (take 10 (map-keys my-map))  ; Get first 10 keys without loading all"
   [^BpfMap bpf-map]
   (take-while some?
               (iterate #(map-get-next-key bpf-map %)
                       (map-get-next-key bpf-map nil))))
 
 (defn map-entries
-  "Get all key-value pairs from map as a lazy sequence"
+  "Get all key-value pairs from map as a lazy sequence.
+
+   Returns a lazy sequence of [key value] vectors. Values are looked up
+   on-demand, making this efficient for large maps.
+
+   Example:
+   (doseq [[k v] (take 100 (map-entries my-map))]
+     (process k v))"
   [^BpfMap bpf-map]
   (map (fn [k] [k (map-lookup bpf-map k)])
        (map-keys bpf-map)))
@@ -215,7 +228,10 @@
   (map second (map-entries bpf-map)))
 
 (defn map-count
-  "Count number of entries in map"
+  "Count number of entries in map.
+
+   Note: This iterates through all keys, which can be slow for large maps.
+   Consider using a separate counter if you need frequent count queries."
   [^BpfMap bpf-map]
   (count (map-keys bpf-map)))
 
@@ -224,6 +240,111 @@
   [^BpfMap bpf-map]
   (doseq [k (map-keys bpf-map)]
     (map-delete bpf-map k)))
+
+;; Chunked/batched iteration for better performance
+
+(defn map-entries-chunked
+  "Get map entries in chunks for better performance.
+
+   Returns a lazy sequence of [key value] vectors, but fetches
+   entries in batches to reduce syscall overhead.
+
+   Parameters:
+   - bpf-map: The BPF map
+   - chunk-size: Number of entries to fetch per batch (default 100)
+
+   Example:
+   (doseq [[k v] (map-entries-chunked my-map 1000)]
+     (process k v))"
+  ([^BpfMap bpf-map]
+   (map-entries-chunked bpf-map 100))
+  ([^BpfMap bpf-map chunk-size]
+   (letfn [(fetch-chunk [start-key]
+             (lazy-seq
+               (let [keys (if start-key
+                           (take chunk-size
+                                 (take-while some?
+                                             (iterate #(map-get-next-key bpf-map %)
+                                                     (map-get-next-key bpf-map start-key))))
+                           (take chunk-size (map-keys bpf-map)))]
+                 (when (seq keys)
+                   (let [entries (map (fn [k] [k (map-lookup bpf-map k)]) keys)]
+                     (concat entries
+                             (when (= (count keys) chunk-size)
+                               (fetch-chunk (last keys)))))))))]
+     (fetch-chunk nil))))
+
+(defn reduce-map
+  "Reduce over map entries without creating intermediate sequences.
+
+   More memory-efficient than (reduce f init (map-entries m)) for
+   very large maps as it processes entries one at a time.
+
+   Parameters:
+   - f: Reducing function (fn [acc [key value]] ...)
+   - init: Initial accumulator value
+   - bpf-map: The BPF map
+
+   Example:
+   (reduce-map (fn [sum [k v]] (+ sum v)) 0 my-map)"
+  [f init ^BpfMap bpf-map]
+  (loop [acc init
+         key (map-get-next-key bpf-map nil)]
+    (if key
+      (let [value (map-lookup bpf-map key)]
+        (recur (f acc [key value])
+               (map-get-next-key bpf-map key)))
+      acc)))
+
+(defn map-filter
+  "Return a lazy sequence of entries matching predicate.
+
+   Parameters:
+   - pred: Predicate function (fn [[key value]] ...) returning true to include
+   - bpf-map: The BPF map
+
+   Example:
+   (map-filter (fn [[k v]] (> v 100)) my-map)"
+  [pred ^BpfMap bpf-map]
+  (filter pred (map-entries bpf-map)))
+
+(defn map-some
+  "Returns the first entry where pred returns logical true.
+
+   Short-circuits as soon as a match is found.
+
+   Parameters:
+   - pred: Predicate function (fn [[key value]] ...)
+   - bpf-map: The BPF map
+
+   Example:
+   (map-some (fn [[k v]] (when (> v 1000) [k v])) my-map)"
+  [pred ^BpfMap bpf-map]
+  (some pred (map-entries bpf-map)))
+
+(defn map-every?
+  "Returns true if pred returns true for all entries.
+
+   Short-circuits on first false.
+
+   Parameters:
+   - pred: Predicate function (fn [[key value]] ...)
+   - bpf-map: The BPF map"
+  [pred ^BpfMap bpf-map]
+  (every? pred (map-entries bpf-map)))
+
+(defn into-clj-map
+  "Convert BPF map entries into a Clojure persistent map.
+
+   Caution: This loads all entries into memory. Only use for
+   maps you know are small enough to fit.
+
+   Parameters:
+   - bpf-map: The BPF map
+
+   Returns a Clojure map with all entries."
+  [^BpfMap bpf-map]
+  (into {} (map-entries bpf-map)))
 
 ;; Batch operations
 

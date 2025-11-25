@@ -1,6 +1,7 @@
 (ns clj-ebpf.syscall
   "Low-level BPF syscall interface using Java Panama FFI (Java 21+)"
-  (:require [clj-ebpf.constants :as const]
+  (:require [clj-ebpf.arch :as arch]
+            [clj-ebpf.constants :as const]
             [clojure.tools.logging :as log])
   (:import [java.lang.foreign Arena MemorySegment SymbolLookup Linker FunctionDescriptor ValueLayout]
            [java.lang.invoke MethodHandle]))
@@ -10,14 +11,25 @@
 (def ^:private ^:dynamic *arena* (Arena/ofAuto))
 
 (def ^:private linker (Linker/nativeLinker))
-(def ^:private libc-lookup
+
+(defn- find-libc-lookup
+  "Find libc using architecture-aware path discovery"
+  []
   (or
-   ;; Try common libc paths on Linux
-   (try (SymbolLookup/libraryLookup "/lib/x86_64-linux-gnu/libc.so.6" *arena*) (catch Exception _ nil))
+   ;; Try architecture-specific path first
+   (when-let [libc-path (arch/find-libc-path)]
+     (try
+       (SymbolLookup/libraryLookup libc-path *arena*)
+       (catch Exception e
+         (log/warn "Failed to load libc from" libc-path ":" (.getMessage e))
+         nil)))
+   ;; Fallback to generic names
    (try (SymbolLookup/libraryLookup "libc.so.6" *arena*) (catch Exception _ nil))
    (try (SymbolLookup/libraryLookup "c" *arena*) (catch Exception _ nil))
-   ;; Fallback to loader lookup
+   ;; Final fallback to loader lookup
    (SymbolLookup/loaderLookup)))
+
+(def ^:private libc-lookup (find-libc-lookup))
 
 ;; Value layouts for common types
 (def ^:private C_INT ValueLayout/JAVA_INT)
@@ -56,8 +68,7 @@
 (defn errno->keyword
   "Convert errno number to keyword"
   [errno-num]
-  (or (some (fn [[k v]] (when (= v errno-num) k)) const/errno)
-      :unknown))
+  (get const/errno-num->keyword errno-num :unknown))
 
 ;; Syscall function
 (def ^:private syscall-fn
