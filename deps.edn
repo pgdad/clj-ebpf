@@ -7,9 +7,13 @@
  ;; Note: No external dependencies! Uses Java 21+ Panama FFI
 
  :aliases
- {:dev {:extra-paths ["dev" "test" "examples"]
+ {:dev {:extra-paths ["dev" "test" "examples" "bench"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
                      criterium/criterium {:mvn/version "0.4.6"}}}
+
+  :bench {:extra-paths ["bench"]
+          :extra-deps {criterium/criterium {:mvn/version "0.4.6"}}
+          :main-opts ["-m" "clj-ebpf.bench-runner"]}
 
   :test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}

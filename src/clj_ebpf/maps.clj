@@ -1044,3 +1044,286 @@
   (println "Entries:")
   (doseq [[k v] (map-entries bpf-map)]
     (println "  " k "=>" v)))
+
+;; ============================================================================
+;; Map-in-Map Support
+;; ============================================================================
+;;
+;; BPF supports nested maps where an outer map contains references to inner maps.
+;; This is useful for:
+;; - Per-CPU data structures with dynamic keys
+;; - Multi-level routing tables
+;; - Hierarchical configuration
+;;
+;; Two types of map-in-map:
+;; - :array-of-maps - Outer map is an array, indexed by integer
+;; - :hash-of-maps - Outer map is a hash, keyed by arbitrary data
+
+(defrecord MapInMap
+  [outer-map           ; The outer map (array-of-maps or hash-of-maps)
+   inner-template      ; Template specification for inner maps
+   inner-maps          ; Atom containing map of index/key -> BpfMap
+   inner-fd])          ; FD of template inner map (required for creation)
+
+(defn- create-inner-template
+  "Create a template inner map for map-in-map.
+
+  The template is used to define the structure of inner maps.
+  It's created but not used directly - its FD is passed when
+  creating the outer map."
+  [inner-spec]
+  (create-map inner-spec))
+
+(defn create-map-in-map
+  "Create a map-in-map structure (outer map containing inner maps).
+
+  Map-in-map allows dynamic creation of inner maps at runtime,
+  useful for per-entity data structures or hierarchical configs.
+
+  Parameters:
+  - outer-type: :array-of-maps or :hash-of-maps
+  - max-entries: Maximum entries in outer map
+  - inner-spec: Specification for inner maps (same as create-map options)
+
+  Options:
+  - :outer-key-size - Key size for outer map (default: 4 for array, required for hash)
+  - :name - Name prefix for maps
+
+  Returns a MapInMap record.
+
+  Example:
+    ;; Create array of hash maps (e.g., per-CPU connection tables)
+    (create-map-in-map
+      :array-of-maps 64
+      {:map-type :hash
+       :key-size 16      ; Connection tuple
+       :value-size 32    ; Connection state
+       :max-entries 1024}
+      :name \"conn_table\")"
+  [outer-type max-entries inner-spec & {:keys [outer-key-size name]
+                                        :or {name "map_in_map"}}]
+  (let [;; Create template inner map
+        inner-template (create-inner-template
+                         (assoc inner-spec :map-name (str name "_inner_template")))
+
+        ;; Determine outer key size
+        key-size (case outer-type
+                   :array-of-maps 4  ; Arrays use u32 index
+                   :hash-of-maps (or outer-key-size
+                                     (throw (ex-info "outer-key-size required for hash-of-maps"
+                                                     {:outer-type outer-type}))))
+
+        ;; Create outer map with inner map FD
+        outer-map (create-map
+                    {:map-type outer-type
+                     :key-size key-size
+                     :value-size 4  ; Inner map FDs are u32
+                     :max-entries max-entries
+                     :inner-map-fd (:fd inner-template)
+                     :map-name (str name "_outer")
+                     :key-serializer utils/int->bytes
+                     :key-deserializer utils/bytes->int
+                     :value-serializer utils/int->bytes
+                     :value-deserializer utils/bytes->int})]
+
+    (->MapInMap outer-map inner-spec (atom {0 inner-template}) (:fd inner-template))))
+
+(defn add-inner-map
+  "Add a new inner map at the specified index/key.
+
+  Creates a new inner map matching the template and registers it
+  in the outer map at the given location.
+
+  Parameters:
+  - mim: MapInMap record
+  - key: Index (for array-of-maps) or key (for hash-of-maps)
+
+  Returns the newly created inner BpfMap."
+  [^MapInMap mim key]
+  (let [;; Create new inner map matching template
+        inner-map (create-map
+                    (assoc (:inner-template mim)
+                           :map-name (str "inner_" key)))
+
+        ;; Register in outer map
+        _ (map-update (:outer-map mim) key (:fd inner-map))
+
+        ;; Track in our inner-maps atom
+        _ (swap! (:inner-maps mim) assoc key inner-map)]
+
+    (log/info "Added inner map at key" key "fd:" (:fd inner-map))
+    inner-map))
+
+(defn get-inner-map
+  "Get the inner map at the specified index/key.
+
+  Returns the BpfMap if it exists in our tracking, or nil."
+  [^MapInMap mim key]
+  (get @(:inner-maps mim) key))
+
+(defn remove-inner-map
+  "Remove an inner map at the specified index/key.
+
+  Deletes the entry from the outer map and closes the inner map.
+
+  Parameters:
+  - mim: MapInMap record
+  - key: Index or key to remove
+
+  Returns true if removed, false if not found."
+  [^MapInMap mim key]
+  (when-let [inner-map (get @(:inner-maps mim) key)]
+    ;; Remove from outer map
+    (map-delete (:outer-map mim) key)
+    ;; Close inner map
+    (close-map inner-map)
+    ;; Remove from tracking
+    (swap! (:inner-maps mim) dissoc key)
+    (log/info "Removed inner map at key" key)
+    true))
+
+(defn inner-map-lookup
+  "Look up a value in an inner map.
+
+  Convenience function for nested lookup.
+
+  Parameters:
+  - mim: MapInMap record
+  - outer-key: Key for outer map
+  - inner-key: Key for inner map
+
+  Returns the value or nil if not found."
+  [^MapInMap mim outer-key inner-key]
+  (when-let [inner-map (get-inner-map mim outer-key)]
+    (map-lookup inner-map inner-key)))
+
+(defn inner-map-update
+  "Update a value in an inner map.
+
+  Convenience function for nested update. Creates the inner map
+  if it doesn't exist.
+
+  Parameters:
+  - mim: MapInMap record
+  - outer-key: Key for outer map
+  - inner-key: Key for inner map
+  - value: Value to store"
+  [^MapInMap mim outer-key inner-key value]
+  (let [inner-map (or (get-inner-map mim outer-key)
+                      (add-inner-map mim outer-key))]
+    (map-update inner-map inner-key value)))
+
+(defn close-map-in-map
+  "Close a map-in-map structure and all its inner maps.
+
+  Parameters:
+  - mim: MapInMap record"
+  [^MapInMap mim]
+  ;; Close all inner maps
+  (doseq [[_key inner-map] @(:inner-maps mim)]
+    (try
+      (close-map inner-map)
+      (catch Exception e
+        (log/warn "Failed to close inner map:" e))))
+  ;; Close outer map
+  (close-map (:outer-map mim))
+  (log/info "Closed map-in-map"))
+
+(defn inner-map-count
+  "Get the number of inner maps currently registered."
+  [^MapInMap mim]
+  (count @(:inner-maps mim)))
+
+(defn inner-map-keys
+  "Get all keys that have inner maps registered."
+  [^MapInMap mim]
+  (keys @(:inner-maps mim)))
+
+(defmacro with-map-in-map
+  "Create a map-in-map and ensure it's closed after use.
+
+  Example:
+    (with-map-in-map [mim :array-of-maps 64
+                          {:map-type :hash :key-size 4 :value-size 8 :max-entries 100}]
+      (add-inner-map mim 0)
+      (inner-map-update mim 0 42 12345)
+      (println (inner-map-lookup mim 0 42)))"
+  [[binding outer-type max-entries inner-spec & opts] & body]
+  `(let [~binding (create-map-in-map ~outer-type ~max-entries ~inner-spec ~@opts)]
+     (try
+       ~@body
+       (finally
+         (close-map-in-map ~binding)))))
+
+;; ============================================================================
+;; Bloom Filter Support
+;; ============================================================================
+;;
+;; Bloom filters are probabilistic data structures for membership testing.
+;; They can have false positives but never false negatives.
+
+(defn create-bloom-filter
+  "Create a bloom filter map.
+
+  Bloom filters are space-efficient probabilistic data structures
+  used for membership testing. They may return false positives
+  but never false negatives.
+
+  Parameters:
+  - max-entries: Number of entries (affects false positive rate)
+  - value-size: Size of values to store (typically hash size)
+
+  Options:
+  - :map-name - Name for the map
+  - :nr-hash-funcs - Number of hash functions (default: kernel decides)
+
+  Example:
+    (def bloom (create-bloom-filter 10000 4))
+    (bloom-add bloom (hash-bytes some-data))
+    (bloom-check bloom (hash-bytes some-data)) ; => true or false"
+  [max-entries value-size & {:keys [map-name nr-hash-funcs]}]
+  (create-map {:map-type :bloom-filter
+               :key-size 0  ; Bloom filters don't use keys
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               ;; Note: nr-hash-funcs would be set via map_extra in newer kernels
+               :value-serializer identity
+               :value-deserializer identity}))
+
+(defn bloom-add
+  "Add an element to a bloom filter.
+
+  Parameters:
+  - bloom-map: Bloom filter map
+  - value: Value bytes to add (must match value-size)"
+  [^BpfMap bloom-map value]
+  (let [value-seg (if (instance? MemorySegment value)
+                    value
+                    (utils/bytes->segment value))]
+    ;; Bloom filters use update with NULL key
+    (syscall/map-update-elem (:fd bloom-map) MemorySegment/NULL value-seg 0)))
+
+(defn bloom-check
+  "Check if an element might be in the bloom filter.
+
+  Returns:
+  - true: Element might be in the set (could be false positive)
+  - false: Element is definitely not in the set
+
+  Parameters:
+  - bloom-map: Bloom filter map
+  - value: Value bytes to check"
+  [^BpfMap bloom-map value]
+  (let [value-seg (if (instance? MemorySegment value)
+                    value
+                    (utils/bytes->segment value))]
+    (try
+      ;; Bloom filters use lookup with value in the key position
+      (syscall/map-lookup-elem (:fd bloom-map) value-seg
+                               (utils/allocate-memory (:value-size bloom-map)))
+      true  ; Found (might be false positive)
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :enoent (:errno-keyword (ex-data e)))
+          false  ; Definitely not in set
+          (throw e))))))
