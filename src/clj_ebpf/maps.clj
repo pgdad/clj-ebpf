@@ -194,6 +194,53 @@
           nil ; No more keys
           (throw e))))))
 
+;; ============================================================================
+;; Map Existence Predicates
+;; ============================================================================
+
+(defn map-exists?
+  "Check if a BPF map is still valid and exists in the kernel.
+
+  Returns true if the map FD is valid and the map exists.
+  Returns false if the map has been closed or deleted.
+
+  This performs a simple get-next-key operation which will fail
+  if the map FD is invalid."
+  [^BpfMap bpf-map]
+  (when-let [fd (:fd bpf-map)]
+    (when (pos? fd)
+      (try
+        ;; Try a simple operation - this will fail with EBADF if FD is invalid
+        ;; Use get-next-key with NULL key to check if map is accessible
+        (let [key-seg MemorySegment/NULL
+              next-key-seg (utils/allocate-memory (max (:key-size bpf-map) 4))]
+          (syscall/map-get-next-key fd key-seg next-key-seg)
+          true)
+        (catch clojure.lang.ExceptionInfo e
+          ;; ENOENT means map is empty but valid, EBADF means invalid
+          (let [errno-kw (:errno-keyword (ex-data e))]
+            (not= errno-kw :ebadf)))
+        (catch Exception _
+          false)))))
+
+(defn map-pinned?
+  "Check if a map is pinned to the BPF filesystem.
+
+  Note: This only checks if the map was created with pinning info
+  in this session. To check if a map file exists on disk, use
+  clojure.java.io/file."
+  [^BpfMap bpf-map]
+  (boolean (:pin-path bpf-map)))
+
+(defn map-empty?
+  "Check if a BPF map has no entries.
+
+  Returns true if the map has no entries, false otherwise.
+  Returns nil if the map doesn't exist or is inaccessible."
+  [^BpfMap bpf-map]
+  (when (map-exists? bpf-map)
+    (nil? (map-get-next-key bpf-map nil))))
+
 ;; Higher-level map operations
 
 (defn map-keys

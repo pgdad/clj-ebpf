@@ -327,3 +327,326 @@
                  :insns bytecode
                  :prog-name name
                  :license license}))
+
+;; ============================================================================
+;; Existence Predicates
+;; ============================================================================
+
+(defn program-exists?
+  "Check if a BPF program is still valid and loaded in the kernel.
+
+  Returns true if the program FD is valid and the program exists.
+  Returns false if the program has been closed or unloaded.
+
+  Note: This is a simple check that verifies the FD is positive.
+  The kernel will return EBADF on operations if the FD is invalid."
+  [^BpfProgram prog]
+  (when-let [fd (:fd prog)]
+    (and (integer? fd) (pos? fd))))
+
+(defn program-attached?
+  "Check if a BPF program has any active attachments.
+
+  Returns true if the program has one or more attachments."
+  [^BpfProgram prog]
+  (boolean (seq (:attachments prog))))
+
+;; ============================================================================
+;; Tail Call Support
+;; ============================================================================
+;;
+;; Tail calls allow BPF programs to chain together, enabling:
+;; - Breaking up large programs to fit within instruction limits
+;; - Dynamic dispatch based on packet type or other criteria
+;; - Modular program design with shared components
+;;
+;; Usage pattern:
+;; 1. Create a prog_array map
+;; 2. Load individual BPF programs
+;; 3. Register programs in the prog_array at specific indices
+;; 4. Use bpf_tail_call helper in BPF code to jump between programs
+
+(defrecord TailCallChain
+  [prog-array         ; The prog_array map
+   programs           ; Map of index -> BpfProgram
+   entry-program])    ; The entry point program (index 0)
+
+(defn create-prog-array
+  "Create a program array map for tail calls.
+
+  Parameters:
+  - max-entries: Maximum number of programs (indices 0 to max-entries-1)
+  - name: Optional name for the map
+
+  Returns a BPF map suitable for use with bpf_tail_call."
+  [max-entries & {:keys [name] :or {name "prog_array"}}]
+  (syscall/map-create
+    {:map-type :prog-array
+     :key-size 4
+     :value-size 4
+     :max-entries max-entries
+     :map-name name}))
+
+(defn register-tail-call
+  "Register a BPF program in a prog_array at the specified index.
+
+  Parameters:
+  - prog-array-fd: File descriptor of the prog_array map
+  - index: Index at which to register the program (0 to max-entries-1)
+  - program: BpfProgram to register
+
+  Example:
+    (register-tail-call prog-array 0 entry-program)
+    (register-tail-call prog-array 1 handler-program)
+    (register-tail-call prog-array 2 exit-program)"
+  [prog-array-fd index ^BpfProgram program]
+  (let [key-seg (utils/bytes->segment (utils/int->bytes index))
+        value-seg (utils/bytes->segment (utils/int->bytes (:fd program)))]
+    (syscall/map-update-elem prog-array-fd key-seg value-seg 0)
+    (log/info "Registered program" (:name program) "at tail call index" index)))
+
+(defn unregister-tail-call
+  "Remove a program from a prog_array at the specified index.
+
+  Parameters:
+  - prog-array-fd: File descriptor of the prog_array map
+  - index: Index to clear"
+  [prog-array-fd index]
+  (let [key-seg (utils/bytes->segment (utils/int->bytes index))]
+    (try
+      (syscall/map-delete-elem prog-array-fd key-seg)
+      (log/info "Unregistered tail call at index" index)
+      true
+      (catch Exception _
+        false))))
+
+(defn create-tail-call-chain
+  "Create a tail call chain with multiple BPF programs.
+
+  A tail call chain allows BPF programs to call each other in sequence,
+  useful for breaking up large programs or implementing state machines.
+
+  Parameters:
+  - programs: Vector of {:program BpfProgram :index int} maps
+  - :max-entries: Maximum programs in chain (default: 32)
+  - :name: Name for the prog_array map
+
+  Returns a TailCallChain record.
+
+  Example:
+    (create-tail-call-chain
+      [{:program entry-prog :index 0}
+       {:program parse-prog :index 1}
+       {:program action-prog :index 2}]
+      :name \"my_chain\")"
+  [programs & {:keys [max-entries name]
+               :or {max-entries 32
+                    name "tail_call_chain"}}]
+  (let [prog-array-fd (create-prog-array max-entries :name name)
+        ;; Register all programs
+        _ (doseq [{:keys [program index]} programs]
+            (register-tail-call prog-array-fd index program))
+        ;; Build index map
+        prog-map (into {} (map (fn [{:keys [program index]}]
+                                 [index program])
+                               programs))
+        ;; Find entry program (index 0)
+        entry-prog (get prog-map 0)]
+    (->TailCallChain prog-array-fd prog-map entry-prog)))
+
+(defn close-tail-call-chain
+  "Close a tail call chain and all its programs.
+
+  Parameters:
+  - chain: TailCallChain to close
+  - :close-programs? - Whether to close the individual programs (default: true)"
+  [^TailCallChain chain & {:keys [close-programs?] :or {close-programs? true}}]
+  ;; Close all registered programs
+  (when close-programs?
+    (doseq [[_index prog] (:programs chain)]
+      (close-program prog)))
+  ;; Close the prog_array map
+  (syscall/close-fd (:prog-array chain))
+  (log/info "Closed tail call chain"))
+
+(defn get-tail-call-program
+  "Get the program at a specific index in a tail call chain.
+
+  Returns the BpfProgram or nil if not found."
+  [^TailCallChain chain index]
+  (get (:programs chain) index))
+
+(defn tail-call-chain-size
+  "Get the number of programs registered in a tail call chain."
+  [^TailCallChain chain]
+  (count (:programs chain)))
+
+(defmacro with-tail-call-chain
+  "Create and manage a tail call chain with automatic cleanup.
+
+  Example:
+    (with-tail-call-chain [chain [{:program p1 :index 0}
+                                   {:program p2 :index 1}]]
+      ;; Use the chain
+      (attach-xdp (:entry-program chain) \"eth0\")
+      (Thread/sleep 10000))"
+  [[binding programs & opts] & body]
+  `(let [~binding (create-tail-call-chain ~programs ~@opts)]
+     (try
+       ~@body
+       (finally
+         (close-tail-call-chain ~binding)))))
+
+;; ============================================================================
+;; BPF_PROG_TEST_RUN Support
+;; ============================================================================
+;;
+;; BPF_PROG_TEST_RUN allows testing BPF programs without attaching them
+;; to real hooks. This is useful for:
+;; - Unit testing BPF programs
+;; - Validating packet processing logic
+;; - CI/CD integration
+
+(defn test-run-program
+  "Run a BPF program in test mode with synthetic input.
+
+  This uses the BPF_PROG_TEST_RUN command to execute a BPF program
+  without attaching it to a real hook. Useful for testing XDP, TC,
+  and other packet-processing programs.
+
+  Parameters:
+  - prog: BpfProgram to test
+  - opts: Map with:
+    - :data-in - Input data (byte array, e.g., packet data)
+    - :data-size-out - Size of output buffer (default: size of data-in or 256)
+    - :ctx-in - Optional context data (program-type specific)
+    - :ctx-size-out - Size of context output buffer (default: 0)
+    - :repeat - Number of times to run (default: 1, for benchmarking)
+    - :flags - Test run flags (default: 0)
+
+  Returns a map with:
+  - :retval - Return value from BPF program (e.g., XDP_PASS, XDP_DROP)
+  - :data-out - Output data (modified packet)
+  - :ctx-out - Output context (if ctx-size-out > 0)
+  - :duration-ns - Execution time in nanoseconds (average if repeat > 1)
+
+  Example:
+    ;; Test an XDP program with a synthetic packet
+    (test-run-program xdp-prog
+      {:data-in (build-test-packet ...)
+       :repeat 1000})
+    ;; => {:retval 2 :data-out [...] :duration-ns 150}
+
+  Note: This feature requires the BPF_PROG_TEST_RUN syscall support
+  which is not yet fully implemented in the syscall module."
+  [^BpfProgram prog {:keys [data-in data-size-out ctx-in ctx-size-out repeat flags]
+                     :or {data-size-out nil
+                          ctx-in nil
+                          ctx-size-out 0
+                          repeat 1
+                          flags 0}}]
+  ;; TODO: Implement prog-test-run in syscall.clj
+  ;; The BPF_PROG_TEST_RUN command (10) needs to be added to the syscall module
+  (throw (ex-info "BPF_PROG_TEST_RUN not yet implemented in syscall module"
+                  {:prog-name (:name prog)
+                   :prog-fd (:fd prog)
+                   :data-in-size (when data-in (count data-in))})))
+
+(defn build-test-packet
+  "Build a test packet for BPF program testing.
+
+  Creates a minimal Ethernet/IP/TCP or UDP packet for testing
+  XDP and TC programs.
+
+  Parameters:
+  - protocol: :tcp or :udp
+  - opts: Map with:
+    - :src-mac - Source MAC (default: \"00:00:00:00:00:01\")
+    - :dst-mac - Destination MAC (default: \"00:00:00:00:00:02\")
+    - :src-ip - Source IP (default: \"10.0.0.1\")
+    - :dst-ip - Destination IP (default: \"10.0.0.2\")
+    - :src-port - Source port (default: 12345)
+    - :dst-port - Destination port (default: 80)
+    - :payload - Optional payload bytes
+
+  Returns a byte array containing the packet."
+  [protocol {:keys [src-mac dst-mac src-ip dst-ip src-port dst-port payload]
+             :or {src-mac "00:00:00:00:00:01"
+                  dst-mac "00:00:00:00:00:02"
+                  src-ip "10.0.0.1"
+                  dst-ip "10.0.0.2"
+                  src-port 12345
+                  dst-port 80
+                  payload nil}}]
+  (let [;; Parse MAC addresses
+        parse-mac (fn [mac-str]
+                    (byte-array (map #(unchecked-byte (Integer/parseInt % 16))
+                                     (str/split mac-str #":"))))
+        ;; Parse IP address
+        parse-ip (fn [ip-str]
+                   (byte-array (map #(unchecked-byte (Integer/parseInt %))
+                                    (str/split ip-str #"\."))))
+
+        src-mac-bytes (parse-mac src-mac)
+        dst-mac-bytes (parse-mac dst-mac)
+        src-ip-bytes (parse-ip src-ip)
+        dst-ip-bytes (parse-ip dst-ip)
+
+        ;; Ethernet header (14 bytes)
+        eth-header (byte-array 14)
+        _ (System/arraycopy dst-mac-bytes 0 eth-header 0 6)
+        _ (System/arraycopy src-mac-bytes 0 eth-header 6 6)
+        _ (aset eth-header 12 (unchecked-byte 0x08))  ; EtherType: IPv4
+        _ (aset eth-header 13 (unchecked-byte 0x00))
+
+        ;; IP header (20 bytes, no options)
+        ip-proto (case protocol :tcp 6 :udp 17 6)
+        payload-len (if payload (count payload) 0)
+        l4-len (case protocol :tcp 20 :udp 8)
+        total-len (+ 20 l4-len payload-len)
+
+        ip-header (byte-array 20)
+        _ (aset ip-header 0 (unchecked-byte 0x45))   ; Version + IHL
+        _ (aset ip-header 1 (unchecked-byte 0x00))   ; DSCP/ECN
+        _ (aset ip-header 2 (unchecked-byte (bit-shift-right total-len 8)))  ; Total length
+        _ (aset ip-header 3 (unchecked-byte (bit-and total-len 0xFF)))
+        _ (aset ip-header 4 (unchecked-byte 0x00))   ; Identification
+        _ (aset ip-header 5 (unchecked-byte 0x00))
+        _ (aset ip-header 6 (unchecked-byte 0x40))   ; Flags (DF)
+        _ (aset ip-header 7 (unchecked-byte 0x00))   ; Fragment offset
+        _ (aset ip-header 8 (unchecked-byte 64))     ; TTL
+        _ (aset ip-header 9 (unchecked-byte ip-proto)) ; Protocol
+        ;; Skip checksum for now (bytes 10-11)
+        _ (System/arraycopy src-ip-bytes 0 ip-header 12 4)
+        _ (System/arraycopy dst-ip-bytes 0 ip-header 16 4)
+
+        ;; L4 header
+        l4-header (case protocol
+                    :tcp (let [h (byte-array 20)]
+                           (aset h 0 (unchecked-byte (bit-shift-right src-port 8)))
+                           (aset h 1 (unchecked-byte (bit-and src-port 0xFF)))
+                           (aset h 2 (unchecked-byte (bit-shift-right dst-port 8)))
+                           (aset h 3 (unchecked-byte (bit-and dst-port 0xFF)))
+                           (aset h 12 (unchecked-byte 0x50))  ; Data offset (5 words)
+                           (aset h 13 (unchecked-byte 0x02))  ; SYN flag
+                           h)
+                    :udp (let [h (byte-array 8)]
+                           (aset h 0 (unchecked-byte (bit-shift-right src-port 8)))
+                           (aset h 1 (unchecked-byte (bit-and src-port 0xFF)))
+                           (aset h 2 (unchecked-byte (bit-shift-right dst-port 8)))
+                           (aset h 3 (unchecked-byte (bit-and dst-port 0xFF)))
+                           (aset h 4 (unchecked-byte (bit-shift-right (+ 8 payload-len) 8)))
+                           (aset h 5 (unchecked-byte (bit-and (+ 8 payload-len) 0xFF)))
+                           h))
+
+        ;; Combine all parts
+        total-size (+ 14 20 (count l4-header) payload-len)
+        packet (byte-array total-size)]
+
+    (System/arraycopy eth-header 0 packet 0 14)
+    (System/arraycopy ip-header 0 packet 14 20)
+    (System/arraycopy l4-header 0 packet 34 (count l4-header))
+    (when payload
+      (System/arraycopy payload 0 packet (+ 34 (count l4-header)) payload-len))
+
+    packet))

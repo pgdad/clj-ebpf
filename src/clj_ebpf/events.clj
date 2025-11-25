@@ -1,11 +1,13 @@
 (ns clj-ebpf.events
   "Enhanced BPF event reading from ring buffers with memory mapping and epoll support"
   (:require [clj-ebpf.syscall :as syscall]
+            [clj-ebpf.arch :as arch]
             [clj-ebpf.constants :as const]
             [clj-ebpf.utils :as utils]
             [clj-ebpf.maps :as maps])
   (:import [java.lang.foreign Arena MemorySegment ValueLayout]
            [java.nio ByteBuffer ByteOrder]
+           [java.util.concurrent ArrayBlockingQueue TimeUnit]
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
            [clj_ebpf.maps BpfMap]))
 
@@ -42,7 +44,8 @@
   - flags: Mapping flags (MAP_SHARED=1)
   - offset: Offset in file"
   [fd length prot flags offset]
-  (let [result (syscall/raw-syscall 9 0 length prot flags fd offset)] ; mmap syscall = 9
+  (let [mmap-nr (arch/get-syscall-nr :mmap)
+        result (syscall/raw-syscall mmap-nr 0 length prot flags fd offset)]
     (when (neg? result)
       (throw (ex-info "mmap failed" {:errno (- result) :fd fd :length length})))
     result))
@@ -54,7 +57,8 @@
   - addr: Address to unmap
   - length: Length in bytes"
   [addr length]
-  (let [result (syscall/raw-syscall 11 addr length)] ; munmap syscall = 11
+  (let [munmap-nr (arch/get-syscall-nr :munmap)
+        result (syscall/raw-syscall munmap-nr addr length)]
     (when (neg? result)
       (throw (ex-info "munmap failed" {:errno (- result)})))))
 
@@ -198,7 +202,8 @@
 
   Returns epoll file descriptor"
   []
-  (let [result (syscall/raw-syscall 291 1)] ; epoll_create1 syscall = 291
+  (let [epoll-create1-nr (arch/get-syscall-nr :epoll-create1)
+        result (syscall/raw-syscall epoll-create1-nr 1)]
     (when (neg? result)
       (throw (ex-info "epoll_create1 failed" {:errno (- result)})))
     result))
@@ -212,10 +217,11 @@
   - fd: File descriptor to add/remove/modify
   - events: Event mask (EPOLLIN, EPOLLOUT, etc.)"
   [epfd op fd events]
-  (let [;; struct epoll_event { u32 events; u64 data; }
+  (let [epoll-ctl-nr (arch/get-syscall-nr :epoll-ctl)
+        ;; struct epoll_event { u32 events; u64 data; }
         event-bytes (utils/pack-struct [[:u32 events] [:u64 fd]])
         event-seg (utils/bytes->segment event-bytes)
-        result (syscall/raw-syscall 233 epfd op fd event-seg)] ; epoll_ctl syscall = 233
+        result (syscall/raw-syscall epoll-ctl-nr epfd op fd event-seg)]
     (when (neg? result)
       (throw (ex-info "epoll_ctl failed" {:errno (- result) :op op :fd fd})))))
 
@@ -228,12 +234,14 @@
 
   Returns vector of ready file descriptors"
   [epfd timeout-ms]
-  (let [max-events 64
+  (let [epoll-pwait-nr (arch/get-syscall-nr :epoll-pwait)
+        max-events 64
         ;; Allocate buffer for events (12 bytes per event: 4 bytes events + 8 bytes data)
         events-seg (utils/allocate-memory (* max-events 12))
-        result (syscall/raw-syscall 232 epfd events-seg max-events timeout-ms)] ; epoll_wait syscall = 232
+        ;; Use epoll_pwait with NULL sigmask for portability (arm64/riscv64 don't have epoll_wait)
+        result (syscall/raw-syscall epoll-pwait-nr epfd events-seg max-events timeout-ms 0)]
     (if (neg? result)
-      (throw (ex-info "epoll_wait failed" {:errno (- result)}))
+      (throw (ex-info "epoll_pwait failed" {:errno (- result)}))
       ;; Parse ready fds
       (vec (for [i (range result)]
              (let [offset (* i 12)
@@ -497,3 +505,295 @@
     (let [parsed (parser event-bytes)]
       (when (filter parsed)
         (handler (transform parsed))))))
+
+;; ============================================================================
+;; Ring Buffer Consumer with Backpressure
+;; ============================================================================
+;;
+;; The backpressure consumer adds flow control to prevent unbounded memory
+;; growth when the consumer cannot keep up with the producer. It uses a
+;; bounded queue and tracks dropped events for monitoring.
+
+(defrecord BackpressureConsumer
+  [map                  ; The ringbuf map
+   layout               ; RingBufLayout (memory-mapped)
+   epoll-fd             ; Epoll file descriptor
+   running?             ; AtomicBoolean for running state
+   reader-thread        ; Thread for reading from ring buffer
+   processor-thread     ; Thread for processing events
+   queue                ; ArrayBlockingQueue for backpressure
+   callback             ; Callback function for events
+   deserializer         ; Function to deserialize event data
+   drop-handler         ; Optional handler for dropped events
+   stats])              ; Atom with statistics
+
+(defn create-backpressure-consumer
+  "Create a ring buffer consumer with backpressure support.
+
+  When the processing queue fills up, new events are dropped rather than
+  causing unbounded memory growth. Dropped events can be tracked via
+  statistics or handled via an optional drop handler.
+
+  Options:
+  - :map - The ring buffer map (required)
+  - :callback - Function called for each event (receives deserialized event)
+  - :deserializer - Optional function to deserialize event bytes (default: identity)
+  - :max-pending - Maximum events in processing queue before dropping (default: 10000)
+  - :drop-handler - Optional function called when events are dropped (receives event bytes)
+  - :batch-size - Number of events to read in each batch (default: 64)
+
+  Returns a BackpressureConsumer record.
+
+  Example:
+    (def consumer
+      (create-backpressure-consumer
+        {:map ringbuf-map
+         :callback process-event
+         :deserializer parse-event
+         :max-pending 5000
+         :drop-handler (fn [_] (log/warn \"Event dropped\"))}))"
+  [{:keys [map callback deserializer max-pending drop-handler batch-size]
+    :or {deserializer identity
+         max-pending 10000
+         drop-handler nil
+         batch-size 64}}]
+  (let [layout (map-ringbuf map)
+        epoll-fd (epoll-create)
+        _ (epoll-ctl epoll-fd EPOLL_CTL_ADD (:fd map) EPOLLIN)
+        running? (AtomicBoolean. false)
+        queue (ArrayBlockingQueue. (int max-pending))
+        stats (atom {:events-read 0
+                     :events-processed 0
+                     :events-dropped 0
+                     :queue-full-count 0
+                     :batches-read 0
+                     :errors 0
+                     :max-queue-size 0
+                     :start-time nil
+                     :last-event-time nil
+                     :last-drop-time nil})]
+    (->BackpressureConsumer map layout epoll-fd running? nil nil queue
+                            callback deserializer drop-handler stats)))
+
+(defn start-backpressure-consumer
+  "Start the backpressure consumer.
+
+  Creates two threads:
+  1. Reader thread: Reads events from ring buffer and queues them
+  2. Processor thread: Processes events from the queue
+
+  This separation allows the reader to keep up with the kernel while
+  the processor handles potentially slow callbacks.
+
+  Returns the updated consumer with threads started."
+  [^BackpressureConsumer consumer]
+  (.set (:running? consumer) true)
+  (swap! (:stats consumer) assoc :start-time (System/currentTimeMillis))
+
+  (let [;; Reader thread - reads from ring buffer and enqueues
+        reader-thread
+        (Thread.
+          (fn []
+            (try
+              (while (.get (:running? consumer))
+                (try
+                  ;; Wait for events with epoll (100ms timeout)
+                  (let [ready-fds (epoll-wait (:epoll-fd consumer) 100)]
+                    (when (seq ready-fds)
+                      ;; Read batch of events
+                      (let [events (read-ringbuf-events (:layout consumer)
+                                                        :max-events 64)]
+                        (when (seq events)
+                          (swap! (:stats consumer) update :batches-read inc)
+                          (swap! (:stats consumer) update :events-read + (count events))
+
+                          ;; Try to enqueue each event
+                          (doseq [event-bytes events]
+                            (if (.offer (:queue consumer) event-bytes)
+                              ;; Successfully queued
+                              (let [queue-size (.size (:queue consumer))]
+                                (swap! (:stats consumer)
+                                       update :max-queue-size max queue-size))
+                              ;; Queue full - drop event
+                              (do
+                                (swap! (:stats consumer) update :events-dropped inc)
+                                (swap! (:stats consumer) update :queue-full-count inc)
+                                (swap! (:stats consumer) assoc :last-drop-time
+                                       (System/currentTimeMillis))
+                                (when-let [drop-handler (:drop-handler consumer)]
+                                  (try
+                                    (drop-handler event-bytes)
+                                    (catch Exception _))))))))))
+                  (catch Exception e
+                    (swap! (:stats consumer) update :errors inc))))
+              (finally
+                (.set (:running? consumer) false))))
+          "ringbuf-reader")
+
+        ;; Processor thread - processes queued events
+        processor-thread
+        (Thread.
+          (fn []
+            (try
+              (while (or (.get (:running? consumer))
+                         (not (.isEmpty (:queue consumer))))
+                (try
+                  ;; Poll with timeout to allow checking running state
+                  (when-let [event-bytes (.poll (:queue consumer) 100 TimeUnit/MILLISECONDS)]
+                    (let [deserialized ((:deserializer consumer) event-bytes)]
+                      ((:callback consumer) deserialized)
+                      (swap! (:stats consumer) update :events-processed inc)
+                      (swap! (:stats consumer) assoc :last-event-time
+                             (System/currentTimeMillis))))
+                  (catch Exception e
+                    (swap! (:stats consumer) update :errors inc))))
+              (catch InterruptedException _
+                ;; Thread interrupted, exit gracefully
+                nil)))
+          "ringbuf-processor")]
+
+    (.setDaemon reader-thread true)
+    (.setDaemon processor-thread true)
+    (.start reader-thread)
+    (.start processor-thread)
+    (assoc consumer
+           :reader-thread reader-thread
+           :processor-thread processor-thread)))
+
+(defn stop-backpressure-consumer
+  "Stop the backpressure consumer and clean up resources.
+
+  Waits for the processor to drain remaining queued events (up to 5 seconds)
+  before forcefully terminating.
+
+  Returns the consumer with threads stopped."
+  [^BackpressureConsumer consumer]
+  (.set (:running? consumer) false)
+
+  ;; Wait for reader thread
+  (when-let [thread (:reader-thread consumer)]
+    (.join thread 2000))
+
+  ;; Wait for processor to drain queue (with timeout)
+  (when-let [thread (:processor-thread consumer)]
+    (.join thread 5000)
+    (when (.isAlive thread)
+      (.interrupt thread)))
+
+  ;; Cleanup
+  (try
+    (epoll-ctl (:epoll-fd consumer) EPOLL_CTL_DEL (:fd (:map consumer)) 0)
+    (catch Exception _))
+  (syscall/close-fd (:epoll-fd consumer))
+  (unmap-ringbuf (:layout consumer))
+  consumer)
+
+(defn get-backpressure-stats
+  "Get detailed statistics from the backpressure consumer.
+
+  Returns a map with:
+  - :events-read - Total events read from ring buffer
+  - :events-processed - Total events successfully processed
+  - :events-dropped - Total events dropped due to backpressure
+  - :queue-full-count - Number of times queue was full
+  - :batches-read - Number of batches read
+  - :errors - Number of errors encountered
+  - :current-queue-size - Current number of events in queue
+  - :max-queue-size - Maximum queue size reached
+  - :drop-rate - Percentage of events dropped
+  - :events-per-second - Average events processed per second
+  - :uptime-ms - Consumer uptime in milliseconds"
+  [^BackpressureConsumer consumer]
+  (let [stats @(:stats consumer)
+        uptime-ms (if (:start-time stats)
+                    (- (System/currentTimeMillis) (:start-time stats))
+                    0)
+        events-per-sec (if (pos? uptime-ms)
+                         (/ (* (:events-processed stats) 1000.0) uptime-ms)
+                         0.0)
+        total-events (+ (:events-processed stats) (:events-dropped stats))
+        drop-rate (if (pos? total-events)
+                    (* 100.0 (/ (:events-dropped stats) total-events))
+                    0.0)]
+    (assoc stats
+           :current-queue-size (.size (:queue consumer))
+           :drop-rate drop-rate
+           :events-per-second events-per-sec
+           :uptime-ms uptime-ms)))
+
+(defn backpressure-healthy?
+  "Check if the backpressure consumer is healthy.
+
+  Returns true if:
+  - Drop rate is below threshold (default 5%)
+  - Queue utilization is below threshold (default 80%)
+
+  Options:
+  - :max-drop-rate - Maximum acceptable drop rate percentage (default: 5.0)
+  - :max-queue-utilization - Maximum acceptable queue fill percentage (default: 80.0)"
+  [^BackpressureConsumer consumer & {:keys [max-drop-rate max-queue-utilization]
+                                     :or {max-drop-rate 5.0
+                                          max-queue-utilization 80.0}}]
+  (let [stats (get-backpressure-stats consumer)
+        queue-capacity (.remainingCapacity (:queue consumer))
+        queue-size (:current-queue-size stats)
+        queue-total (+ queue-size queue-capacity)
+        queue-utilization (if (pos? queue-total)
+                            (* 100.0 (/ queue-size queue-total))
+                            0.0)]
+    (and (< (:drop-rate stats) max-drop-rate)
+         (< queue-utilization max-queue-utilization))))
+
+(defmacro with-backpressure-consumer
+  "Create and manage a backpressure consumer with automatic cleanup.
+
+  Example:
+    (with-backpressure-consumer [consumer {:map ringbuf-map
+                                           :callback #(println %)
+                                           :max-pending 5000}]
+      (Thread/sleep 10000)
+      (println \"Stats:\" (get-backpressure-stats consumer))
+      (println \"Healthy?\" (backpressure-healthy? consumer)))"
+  [[binding consumer-spec] & body]
+  `(let [consumer# (create-backpressure-consumer ~consumer-spec)
+         ~binding (start-backpressure-consumer consumer#)]
+     (try
+       ~@body
+       (finally
+         (stop-backpressure-consumer ~binding)))))
+
+;; ============================================================================
+;; Sampling Consumer for High-Volume Streams
+;; ============================================================================
+
+(defn create-sampling-consumer
+  "Create a consumer that samples events at a configurable rate.
+
+  Useful for high-volume event streams where processing every event
+  is not necessary (e.g., statistical sampling, debugging).
+
+  Options:
+  - :map - The ring buffer map (required)
+  - :callback - Function called for sampled events
+  - :sample-rate - Fraction of events to sample (0.0 to 1.0, default: 0.1 = 10%)
+  - :deserializer - Optional function to deserialize event bytes
+
+  Note: Uses the backpressure consumer internally with a sampling filter."
+  [{:keys [map callback sample-rate deserializer]
+    :or {sample-rate 0.1
+         deserializer identity}}]
+  (let [sample-counter (AtomicLong. 0)
+        sample-threshold (long (* sample-rate 1000000))  ; Convert to micros for precision
+
+        sampling-callback
+        (fn [event]
+          (let [counter (.incrementAndGet sample-counter)]
+            ;; Use modular arithmetic for uniform sampling
+            (when (< (mod (* counter 1000000) 1000000) sample-threshold)
+              (callback event))))]
+
+    (create-backpressure-consumer
+      {:map map
+       :callback sampling-callback
+       :deserializer deserializer
+       :max-pending 1000})))  ; Smaller queue since we're sampling
