@@ -784,3 +784,195 @@
         (f))
       (finally
         (.close arena)))))
+
+;; ============================================================================
+;; BPF_PROG_TEST_RUN Support
+;; ============================================================================
+;;
+;; BPF_PROG_TEST_RUN (command 10) allows running BPF programs in test mode
+;; without attaching them to hooks. This is essential for:
+;; - Unit testing BPF programs
+;; - CI/CD integration
+;; - Validating program behavior with synthetic inputs
+
+(defrecord ProgTestRunAttr
+  [^int prog-fd
+   ^int retval              ;; Output: return value from program
+   ^int data-size-in        ;; Input: size of data_in
+   ^int data-size-out       ;; Input/Output: size of data_out buffer / actual size
+   ^MemorySegment data-in   ;; Input: packet/context data
+   ^MemorySegment data-out  ;; Output: modified data
+   ^int repeat              ;; Number of times to run (for benchmarking)
+   ^long duration           ;; Output: execution time in nanoseconds
+   ^int ctx-size-in         ;; Input: size of ctx_in
+   ^int ctx-size-out        ;; Input/Output: size of ctx_out buffer / actual size
+   ^MemorySegment ctx-in    ;; Input: context data
+   ^MemorySegment ctx-out   ;; Output: modified context
+   ^int flags               ;; Flags
+   ^int cpu])               ;; CPU to run on (-1 for any)
+
+(defn prog-test-run-attr->segment
+  "Convert ProgTestRunAttr to MemorySegment for syscall.
+
+   bpf_attr for BPF_PROG_TEST_RUN layout:
+   offset 0:  prog_fd (u32)
+   offset 4:  retval (u32) - output
+   offset 8:  data_size_in (u32)
+   offset 12: data_size_out (u32) - input/output
+   offset 16: data_in (u64 pointer)
+   offset 24: data_out (u64 pointer)
+   offset 32: repeat (u32)
+   offset 36: duration (u32) - output, nanoseconds
+   offset 40: ctx_size_in (u32)
+   offset 44: ctx_size_out (u32) - input/output
+   offset 48: ctx_in (u64 pointer)
+   offset 56: ctx_out (u64 pointer)
+   offset 64: flags (u32)
+   offset 68: cpu (u32)"
+  [attr]
+  (let [mem (allocate-zeroed 128)]
+    ;; prog_fd
+    (.set mem C_INT 0 (:prog-fd attr))
+    ;; data_size_in
+    (.set mem C_INT 8 (:data-size-in attr))
+    ;; data_size_out
+    (.set mem C_INT 12 (:data-size-out attr))
+    ;; data_in pointer
+    (when (:data-in attr)
+      (.set mem C_LONG 16 (.address ^MemorySegment (:data-in attr))))
+    ;; data_out pointer
+    (when (:data-out attr)
+      (.set mem C_LONG 24 (.address ^MemorySegment (:data-out attr))))
+    ;; repeat
+    (.set mem C_INT 32 (:repeat attr))
+    ;; ctx_size_in
+    (.set mem C_INT 40 (:ctx-size-in attr))
+    ;; ctx_size_out
+    (.set mem C_INT 44 (:ctx-size-out attr))
+    ;; ctx_in pointer
+    (when (:ctx-in attr)
+      (.set mem C_LONG 48 (.address ^MemorySegment (:ctx-in attr))))
+    ;; ctx_out pointer
+    (when (:ctx-out attr)
+      (.set mem C_LONG 56 (.address ^MemorySegment (:ctx-out attr))))
+    ;; flags
+    (.set mem C_INT 64 (:flags attr))
+    ;; cpu
+    (.set mem C_INT 68 (:cpu attr))
+    mem))
+
+(defn prog-test-run
+  "Run a BPF program in test mode with synthetic input.
+
+   This uses the BPF_PROG_TEST_RUN command to execute a BPF program
+   without attaching it to a real hook.
+
+   Parameters:
+   - prog-fd: Program file descriptor
+   - opts: Map with:
+     - :data-in - Input data as byte array (e.g., packet data)
+     - :data-size-out - Size of output buffer (default: size of data-in or 256)
+     - :ctx-in - Context data as byte array (program-type specific)
+     - :ctx-size-out - Size of context output buffer (default: 0)
+     - :repeat - Number of times to run (default: 1, for benchmarking)
+     - :flags - Test run flags (default: 0)
+     - :cpu - CPU to run on (default: 0, use -1 for any)
+
+   Returns a map with:
+   - :retval - Return value from BPF program (e.g., XDP_PASS=2, XDP_DROP=1)
+   - :data-out - Output data (byte array, modified packet)
+   - :ctx-out - Output context (byte array, if ctx-size-out > 0)
+   - :duration-ns - Execution time in nanoseconds (average if repeat > 1)
+   - :data-size-out - Actual size of output data
+
+   Example:
+   ```clojure
+   ;; Test an XDP program
+   (let [packet (byte-array [...])
+         result (prog-test-run prog-fd {:data-in packet :repeat 1000})]
+     (println \"Return value:\" (:retval result))
+     (println \"Duration:\" (:duration-ns result) \"ns\"))
+   ```
+
+   Supported program types:
+   - XDP (xdp_md context)
+   - Sched CLS/ACT (sk_buff context)
+   - Socket filter
+   - Raw tracepoint
+   - Flow dissector"
+  [prog-fd {:keys [data-in data-size-out ctx-in ctx-size-out repeat flags cpu]
+            :or {data-size-out nil
+                 ctx-in nil
+                 ctx-size-out 0
+                 repeat 1
+                 flags 0
+                 cpu 0}}]
+  (let [;; Calculate sizes
+        data-in-size (if data-in (count data-in) 0)
+        data-out-size (or data-size-out (max data-in-size 256))
+        ctx-in-size (if ctx-in (count ctx-in) 0)
+        ctx-out-size (or ctx-size-out 0)
+
+        ;; Allocate memory segments
+        data-in-mem (when (pos? data-in-size)
+                      (let [mem (allocate-zeroed data-in-size)]
+                        (MemorySegment/copy (MemorySegment/ofArray data-in) 0
+                                           mem 0 data-in-size)
+                        mem))
+        data-out-mem (when (pos? data-out-size)
+                       (allocate-zeroed data-out-size))
+        ctx-in-mem (when (pos? ctx-in-size)
+                     (let [mem (allocate-zeroed ctx-in-size)]
+                       (MemorySegment/copy (MemorySegment/ofArray ctx-in) 0
+                                          mem 0 ctx-in-size)
+                       mem))
+        ctx-out-mem (when (pos? ctx-out-size)
+                      (allocate-zeroed ctx-out-size))
+
+        ;; Build attr structure
+        attr (->ProgTestRunAttr
+              prog-fd
+              0                    ; retval (output)
+              data-in-size
+              data-out-size
+              data-in-mem
+              data-out-mem
+              repeat
+              0                    ; duration (output)
+              ctx-in-size
+              ctx-out-size
+              ctx-in-mem
+              ctx-out-mem
+              flags
+              cpu)
+        attr-mem (prog-test-run-attr->segment attr)]
+
+    ;; Execute syscall
+    (bpf-syscall :prog-test-run attr-mem)
+
+    ;; Read results from attr structure
+    (let [retval (.get attr-mem C_INT 4)
+          actual-data-size-out (.get attr-mem C_INT 12)
+          duration (.get attr-mem C_INT 36)
+          actual-ctx-size-out (.get attr-mem C_INT 44)
+
+          ;; Extract output data
+          data-out (when (and data-out-mem (pos? actual-data-size-out))
+                     (let [out (byte-array actual-data-size-out)]
+                       (MemorySegment/copy data-out-mem 0
+                                          (MemorySegment/ofArray out) 0
+                                          actual-data-size-out)
+                       out))
+          ctx-out (when (and ctx-out-mem (pos? actual-ctx-size-out))
+                    (let [out (byte-array actual-ctx-size-out)]
+                      (MemorySegment/copy ctx-out-mem 0
+                                         (MemorySegment/ofArray out) 0
+                                         actual-ctx-size-out)
+                      out))]
+
+      {:retval retval
+       :data-out data-out
+       :data-size-out actual-data-size-out
+       :ctx-out ctx-out
+       :ctx-size-out actual-ctx-size-out
+       :duration-ns duration})))

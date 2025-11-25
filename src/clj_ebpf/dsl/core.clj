@@ -17,11 +17,13 @@
    - clj-ebpf.dsl.instructions - Low-level instruction encoding
    - clj-ebpf.dsl.alu - Arithmetic operations
    - clj-ebpf.dsl.mem - Memory operations
-   - clj-ebpf.dsl.jump - Control flow"
+   - clj-ebpf.dsl.jump - Control flow
+   - clj-ebpf.dsl.atomic - Atomic memory operations"
   (:require [clj-ebpf.dsl.instructions :as insn]
             [clj-ebpf.dsl.alu :as alu]
             [clj-ebpf.dsl.mem :as mem]
-            [clj-ebpf.dsl.jump :as jmp]))
+            [clj-ebpf.dsl.jump :as jmp]
+            [clj-ebpf.dsl.atomic :as atomic]))
 
 ;; ============================================================================
 ;; Re-export Instructions
@@ -105,6 +107,7 @@
 (def ld-map-fd mem/ld-map-fd)
 (def ld-map-value mem/ld-map-value)
 
+;; Basic atomic operations (from mem, for backwards compatibility)
 (def atomic-add mem/atomic-add)
 (def atomic-or mem/atomic-or)
 (def atomic-and mem/atomic-and)
@@ -115,6 +118,15 @@
 (def atomic-fetch-or mem/atomic-fetch-or)
 (def atomic-fetch-and mem/atomic-fetch-and)
 (def atomic-fetch-xor mem/atomic-fetch-xor)
+
+;; Higher-level atomic patterns (from atomic module)
+(def atomic-inc atomic/atomic-inc)
+(def atomic-dec atomic/atomic-dec)
+(def atomic-set-bit atomic/atomic-set-bit)
+(def atomic-clear-bit atomic/atomic-clear-bit)
+(def atomic-toggle-bit atomic/atomic-toggle-bit)
+(def atomic-support atomic/atomic-support)
+(def atomic-available? atomic/atomic-available?)
 
 (def stack-load mem/stack-load)
 (def stack-store mem/stack-store)

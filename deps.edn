@@ -25,4 +25,39 @@
 
   :repl {:extra-deps {nrepl/nrepl {:mvn/version "1.1.1"}
                       cider/cider-nrepl {:mvn/version "0.47.1"}}
-         :main-opts ["-m" "nrepl.cmdline" "--middleware" "[cider.nrepl/cider-middleware]"]}}}
+         :main-opts ["-m" "nrepl.cmdline" "--middleware" "[cider.nrepl/cider-middleware]"]}
+
+  ;; API Documentation with codox
+  ;; Usage: clojure -X:codox
+  :codox {:extra-deps {codox/codox {:mvn/version "0.10.8"}}
+          :exec-fn codox.main/generate-docs
+          :exec-args {:source-paths ["src"]
+                      :output-path "docs/api"
+                      :doc-paths ["docs/guides"]
+                      :metadata {:doc/format :markdown}
+                      :source-uri "https://github.com/yourusername/clj-ebpf/blob/{version}/{filepath}#L{line}"
+                      :namespaces [clj-ebpf.core
+                                   clj-ebpf.maps
+                                   clj-ebpf.programs
+                                   clj-ebpf.events
+                                   clj-ebpf.dsl
+                                   clj-ebpf.dsl.core
+                                   clj-ebpf.dsl.alu
+                                   clj-ebpf.dsl.mem
+                                   clj-ebpf.dsl.jump
+                                   clj-ebpf.dsl.atomic
+                                   clj-ebpf.dsl.instructions
+                                   clj-ebpf.helpers
+                                   clj-ebpf.errors
+                                   clj-ebpf.arch
+                                   clj-ebpf.constants
+                                   clj-ebpf.utils
+                                   clj-ebpf.syscall
+                                   clj-ebpf.xdp
+                                   clj-ebpf.tc
+                                   clj-ebpf.perf
+                                   clj-ebpf.cgroup
+                                   clj-ebpf.lsm
+                                   clj-ebpf.btf
+                                   clj-ebpf.elf
+                                   clj-ebpf.relocate]}}}}

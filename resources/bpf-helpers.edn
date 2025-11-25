@@ -1,0 +1,1899 @@
+;; BPF Helper Function Metadata
+;; Auto-generated from helpers.clj - DO NOT EDIT DIRECTLY
+;; Based on Linux kernel 6.x helper definitions
+;;
+;; Schema:
+;; {keyword {:id number
+;;           :name string
+;;           :signature {:return keyword :args [keywords...]}
+;;           :min-kernel string
+;;           :prog-types (set of keywords) or :all
+;;           :category keyword
+;;           :description string}}
+
+{
+ ;; === Map Helpers ===
+ :map-lookup-elem
+ {:id 1
+  :name "bpf_map_lookup_elem"
+  :signature {:return :ptr :args [:map-ptr :key-ptr]}
+  :min-kernel "3.18"
+  :prog-types :all
+  :category :map
+  :description "Lookup map element by key. Returns pointer to value or NULL."}
+
+ :map-update-elem
+ {:id 2
+  :name "bpf_map_update_elem"
+  :signature {:return :long :args [:map-ptr :key-ptr :value-ptr :flags]}
+  :min-kernel "3.18"
+  :prog-types :all
+  :category :map
+  :description "Update map element. Returns 0 on success, negative on error."}
+
+ :map-delete-elem
+ {:id 3
+  :name "bpf_map_delete_elem"
+  :signature {:return :long :args [:map-ptr :key-ptr]}
+  :min-kernel "3.18"
+  :prog-types :all
+  :category :map
+  :description "Delete map element by key. Returns 0 on success, negative on error."}
+
+ ;; === Probe/Trace Helpers ===
+ :probe-read
+ {:id 4
+  :name "bpf_probe_read"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "4.1"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :probe
+  :description "Read memory from unsafe pointer. Returns 0 on success."}
+
+ :ktime-get-ns
+ {:id 5
+  :name "bpf_ktime_get_ns"
+  :signature {:return :u64 :args []}
+  :min-kernel "4.1"
+  :prog-types :all
+  :category :time
+  :description "Get monotonic time in nanoseconds since system boot."}
+
+ :trace-printk
+ {:id 6
+  :name "bpf_trace_printk"
+  :signature {:return :long :args [:fmt-ptr :fmt-size :variadic]}
+  :min-kernel "4.1"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :debug
+  :description "Write to kernel trace pipe. Use for debugging only."}
+
+ :get-prandom-u32
+ {:id 7
+  :name "bpf_get_prandom_u32"
+  :signature {:return :u32 :args []}
+  :min-kernel "4.1"
+  :prog-types :all
+  :category :util
+  :description "Get pseudo-random number."}
+
+ :get-smp-processor-id
+ {:id 8
+  :name "bpf_get_smp_processor_id"
+  :signature {:return :u32 :args []}
+  :min-kernel "4.1"
+  :prog-types :all
+  :category :info
+  :description "Get current CPU number."}
+
+ ;; === Network Helpers (SKB) ===
+ :skb-store-bytes
+ {:id 9
+  :name "bpf_skb_store_bytes"
+  :signature {:return :long :args [:skb-ptr :offset :from-ptr :len :flags]}
+  :min-kernel "4.1"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Store bytes into packet data."}
+
+ :l3-csum-replace
+ {:id 10
+  :name "bpf_l3_csum_replace"
+  :signature {:return :long :args [:skb-ptr :offset :from :to :size]}
+  :min-kernel "4.1"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Recompute L3 checksum."}
+
+ :l4-csum-replace
+ {:id 11
+  :name "bpf_l4_csum_replace"
+  :signature {:return :long :args [:skb-ptr :offset :from :to :flags]}
+  :min-kernel "4.1"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Recompute L4 checksum."}
+
+ :tail-call
+ {:id 12
+  :name "bpf_tail_call"
+  :signature {:return :void :args [:ctx-ptr :prog-array-map :index]}
+  :min-kernel "4.2"
+  :prog-types :all
+  :category :control
+  :description "Tail call to another BPF program. Never returns on success."}
+
+ :clone-redirect
+ {:id 13
+  :name "bpf_clone_redirect"
+  :signature {:return :long :args [:skb-ptr :ifindex :flags]}
+  :min-kernel "4.2"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Clone and redirect packet to another interface."}
+
+ :get-current-pid-tgid
+ {:id 14
+  :name "bpf_get_current_pid_tgid"
+  :signature {:return :u64 :args []}
+  :min-kernel "4.2"
+  :prog-types :all
+  :category :info
+  :description "Get current process PID and TGID. Upper 32 bits = TGID, lower 32 bits = PID."}
+
+ :get-current-uid-gid
+ {:id 15
+  :name "bpf_get_current_uid_gid"
+  :signature {:return :u64 :args []}
+  :min-kernel "4.2"
+  :prog-types :all
+  :category :info
+  :description "Get current process UID and GID. Upper 32 bits = GID, lower 32 bits = UID."}
+
+ :get-current-comm
+ {:id 16
+  :name "bpf_get_current_comm"
+  :signature {:return :long :args [:buf-ptr :size]}
+  :min-kernel "4.2"
+  :prog-types :all
+  :category :info
+  :description "Get current process command name."}
+
+ :get-cgroup-classid
+ {:id 17
+  :name "bpf_get_cgroup_classid"
+  :signature {:return :u32 :args [:skb-ptr]}
+  :min-kernel "4.3"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get cgroup classid for packet."}
+
+ :skb-vlan-push
+ {:id 18
+  :name "bpf_skb_vlan_push"
+  :signature {:return :long :args [:skb-ptr :vlan-proto :vlan-tci]}
+  :min-kernel "4.3"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Push VLAN tag onto packet."}
+
+ :skb-vlan-pop
+ {:id 19
+  :name "bpf_skb_vlan_pop"
+  :signature {:return :long :args [:skb-ptr]}
+  :min-kernel "4.3"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Pop VLAN tag from packet."}
+
+ :skb-get-tunnel-key
+ {:id 20
+  :name "bpf_skb_get_tunnel_key"
+  :signature {:return :long :args [:skb-ptr :key-ptr :size :flags]}
+  :min-kernel "4.3"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get tunnel metadata."}
+
+ :skb-set-tunnel-key
+ {:id 21
+  :name "bpf_skb_set_tunnel_key"
+  :signature {:return :long :args [:skb-ptr :key-ptr :size :flags]}
+  :min-kernel "4.3"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Set tunnel metadata."}
+
+ :perf-event-read
+ {:id 22
+  :name "bpf_perf_event_read"
+  :signature {:return :u64 :args [:map-ptr :flags]}
+  :min-kernel "4.3"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :perf
+  :description "Read perf event counter."}
+
+ :redirect
+ {:id 23
+  :name "bpf_redirect"
+  :signature {:return :long :args [:ifindex :flags]}
+  :min-kernel "4.4"
+  :prog-types #{:sched-cls :sched-act :xdp}
+  :category :network
+  :description "Redirect packet to another interface."}
+
+ :get-route-realm
+ {:id 24
+  :name "bpf_get_route_realm"
+  :signature {:return :u32 :args [:skb-ptr]}
+  :min-kernel "4.4"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get routing realm."}
+
+ :perf-event-output
+ {:id 25
+  :name "bpf_perf_event_output"
+  :signature {:return :long :args [:ctx-ptr :map-ptr :flags :data-ptr :size]}
+  :min-kernel "4.4"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint :sched-cls :sched-act :xdp}
+  :category :perf
+  :description "Write data to perf event buffer."}
+
+ :skb-load-bytes
+ {:id 26
+  :name "bpf_skb_load_bytes"
+  :signature {:return :long :args [:skb-ptr :offset :to-ptr :len]}
+  :min-kernel "4.5"
+  :prog-types #{:sched-cls :sched-act :sk-skb}
+  :category :network
+  :description "Load bytes from packet data."}
+
+ :get-stackid
+ {:id 27
+  :name "bpf_get_stackid"
+  :signature {:return :long :args [:ctx-ptr :map-ptr :flags]}
+  :min-kernel "4.6"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :trace
+  :description "Get stack trace ID."}
+
+ :csum-diff
+ {:id 28
+  :name "bpf_csum_diff"
+  :signature {:return :s64 :args [:from-ptr :from-size :to-ptr :to-size :seed]}
+  :min-kernel "4.6"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Compute checksum difference."}
+
+ :skb-get-tunnel-opt
+ {:id 29
+  :name "bpf_skb_get_tunnel_opt"
+  :signature {:return :long :args [:skb-ptr :opt-ptr :size]}
+  :min-kernel "4.6"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get tunnel options."}
+
+ :skb-set-tunnel-opt
+ {:id 30
+  :name "bpf_skb_set_tunnel_opt"
+  :signature {:return :long :args [:skb-ptr :opt-ptr :size]}
+  :min-kernel "4.6"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Set tunnel options."}
+
+ :skb-change-proto
+ {:id 31
+  :name "bpf_skb_change_proto"
+  :signature {:return :long :args [:skb-ptr :proto :flags]}
+  :min-kernel "4.8"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Change packet protocol."}
+
+ :skb-change-type
+ {:id 32
+  :name "bpf_skb_change_type"
+  :signature {:return :long :args [:skb-ptr :type]}
+  :min-kernel "4.8"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Change packet type."}
+
+ :skb-under-cgroup
+ {:id 33
+  :name "bpf_skb_under_cgroup"
+  :signature {:return :long :args [:skb-ptr :map-ptr :index]}
+  :min-kernel "4.8"
+  :prog-types #{:sched-cls :sched-act}
+  :category :cgroup
+  :description "Check if skb is under cgroup."}
+
+ :get-hash-recalc
+ {:id 34
+  :name "bpf_get_hash_recalc"
+  :signature {:return :u32 :args [:skb-ptr]}
+  :min-kernel "4.8"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get and recalculate packet hash."}
+
+ :get-current-task
+ {:id 35
+  :name "bpf_get_current_task"
+  :signature {:return :u64 :args []}
+  :min-kernel "4.8"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :info
+  :description "Get pointer to current task_struct."}
+
+ :probe-write-user
+ {:id 36
+  :name "bpf_probe_write_user"
+  :signature {:return :long :args [:dst-ptr :src-ptr :len]}
+  :min-kernel "4.8"
+  :prog-types #{:kprobe :tracepoint}
+  :category :probe
+  :description "Write to user memory. Use with caution!"}
+
+ :current-task-under-cgroup
+ {:id 37
+  :name "bpf_current_task_under_cgroup"
+  :signature {:return :long :args [:map-ptr :index]}
+  :min-kernel "4.9"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :cgroup
+  :description "Check if current task is under cgroup."}
+
+ :skb-change-tail
+ {:id 38
+  :name "bpf_skb_change_tail"
+  :signature {:return :long :args [:skb-ptr :len :flags]}
+  :min-kernel "4.9"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Adjust packet tail to new length."}
+
+ :skb-pull-data
+ {:id 39
+  :name "bpf_skb_pull_data"
+  :signature {:return :long :args [:skb-ptr :len]}
+  :min-kernel "4.9"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Pull data from non-linear packet."}
+
+ :csum-update
+ {:id 40
+  :name "bpf_csum_update"
+  :signature {:return :s64 :args [:skb-ptr :csum]}
+  :min-kernel "4.9"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Update packet checksum."}
+
+ :set-hash-invalid
+ {:id 41
+  :name "bpf_set_hash_invalid"
+  :signature {:return :void :args [:skb-ptr]}
+  :min-kernel "4.9"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Invalidate packet hash."}
+
+ :get-numa-node-id
+ {:id 42
+  :name "bpf_get_numa_node_id"
+  :signature {:return :long :args []}
+  :min-kernel "4.10"
+  :prog-types :all
+  :category :info
+  :description "Get current NUMA node ID."}
+
+ :skb-change-head
+ {:id 43
+  :name "bpf_skb_change_head"
+  :signature {:return :long :args [:skb-ptr :len :flags]}
+  :min-kernel "4.10"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Adjust packet headroom."}
+
+ :xdp-adjust-head
+ {:id 44
+  :name "bpf_xdp_adjust_head"
+  :signature {:return :long :args [:xdp-ptr :delta]}
+  :min-kernel "4.10"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Adjust XDP packet head pointer."}
+
+ :probe-read-str
+ {:id 45
+  :name "bpf_probe_read_str"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "4.11"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :probe
+  :description "Read null-terminated string from unsafe pointer."}
+
+ :get-socket-cookie
+ {:id 46
+  :name "bpf_get_socket_cookie"
+  :signature {:return :u64 :args [:ctx-ptr]}
+  :min-kernel "4.12"
+  :prog-types #{:sched-cls :sched-act :sock-ops :cgroup-sock}
+  :category :socket
+  :description "Get unique socket identifier."}
+
+ :get-socket-uid
+ {:id 47
+  :name "bpf_get_socket_uid"
+  :signature {:return :u32 :args [:skb-ptr]}
+  :min-kernel "4.12"
+  :prog-types #{:sched-cls :sched-act}
+  :category :socket
+  :description "Get socket owner UID."}
+
+ :set-hash
+ {:id 48
+  :name "bpf_set_hash"
+  :signature {:return :long :args [:skb-ptr :hash]}
+  :min-kernel "4.13"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Set packet hash."}
+
+ :setsockopt
+ {:id 49
+  :name "bpf_setsockopt"
+  :signature {:return :long :args [:ctx-ptr :level :optname :optval-ptr :optlen]}
+  :min-kernel "4.13"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Set socket option."}
+
+ :skb-adjust-room
+ {:id 50
+  :name "bpf_skb_adjust_room"
+  :signature {:return :long :args [:skb-ptr :len-diff :mode :flags]}
+  :min-kernel "4.13"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Adjust packet room (headroom/tailroom)."}
+
+ :redirect-map
+ {:id 51
+  :name "bpf_redirect_map"
+  :signature {:return :long :args [:map-ptr :key :flags]}
+  :min-kernel "4.14"
+  :prog-types #{:sched-cls :sched-act :xdp}
+  :category :network
+  :description "Redirect packet using map lookup."}
+
+ :sk-redirect-map
+ {:id 52
+  :name "bpf_sk_redirect_map"
+  :signature {:return :long :args [:skb-ptr :map-ptr :key :flags]}
+  :min-kernel "4.14"
+  :prog-types #{:sk-skb}
+  :category :socket
+  :description "Redirect socket buffer using map."}
+
+ :sock-map-update
+ {:id 53
+  :name "bpf_sock_map_update"
+  :signature {:return :long :args [:skops-ptr :map-ptr :key-ptr :flags]}
+  :min-kernel "4.14"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Update socket map."}
+
+ :xdp-adjust-meta
+ {:id 54
+  :name "bpf_xdp_adjust_meta"
+  :signature {:return :long :args [:xdp-ptr :delta]}
+  :min-kernel "4.15"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Adjust XDP metadata pointer."}
+
+ :perf-event-read-value
+ {:id 55
+  :name "bpf_perf_event_read_value"
+  :signature {:return :long :args [:map-ptr :flags :buf-ptr :buf-size]}
+  :min-kernel "4.15"
+  :prog-types #{:kprobe :tracepoint :perf-event}
+  :category :perf
+  :description "Read perf event counter with additional info."}
+
+ :perf-prog-read-value
+ {:id 56
+  :name "bpf_perf_prog_read_value"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :buf-size]}
+  :min-kernel "4.15"
+  :prog-types #{:perf-event}
+  :category :perf
+  :description "Read perf program values."}
+
+ :getsockopt
+ {:id 57
+  :name "bpf_getsockopt"
+  :signature {:return :long :args [:ctx-ptr :level :optname :optval-ptr :optlen]}
+  :min-kernel "4.15"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Get socket option."}
+
+ :override-return
+ {:id 58
+  :name "bpf_override_return"
+  :signature {:return :long :args [:regs-ptr :rc]}
+  :min-kernel "4.16"
+  :prog-types #{:kprobe}
+  :category :probe
+  :description "Override function return value. Requires CONFIG_BPF_KPROBE_OVERRIDE."}
+
+ :sock-ops-cb-flags-set
+ {:id 59
+  :name "bpf_sock_ops_cb_flags_set"
+  :signature {:return :long :args [:sock-ops-ptr :flags]}
+  :min-kernel "4.16"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Set socket ops callback flags."}
+
+ :msg-redirect-map
+ {:id 60
+  :name "bpf_msg_redirect_map"
+  :signature {:return :long :args [:msg-ptr :map-ptr :key :flags]}
+  :min-kernel "4.17"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Redirect socket message using map."}
+
+ :msg-apply-bytes
+ {:id 61
+  :name "bpf_msg_apply_bytes"
+  :signature {:return :long :args [:msg-ptr :bytes]}
+  :min-kernel "4.17"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Apply bytes for msg redirect."}
+
+ :msg-cork-bytes
+ {:id 62
+  :name "bpf_msg_cork_bytes"
+  :signature {:return :long :args [:msg-ptr :bytes]}
+  :min-kernel "4.17"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Cork bytes for msg operations."}
+
+ :msg-pull-data
+ {:id 63
+  :name "bpf_msg_pull_data"
+  :signature {:return :long :args [:msg-ptr :start :end :flags]}
+  :min-kernel "4.17"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Pull data from socket message."}
+
+ :bind
+ {:id 64
+  :name "bpf_bind"
+  :signature {:return :long :args [:ctx-ptr :addr-ptr :addr-len]}
+  :min-kernel "4.17"
+  :prog-types #{:cgroup-sock-addr}
+  :category :socket
+  :description "Bind socket to address."}
+
+ :xdp-adjust-tail
+ {:id 65
+  :name "bpf_xdp_adjust_tail"
+  :signature {:return :long :args [:xdp-ptr :delta]}
+  :min-kernel "4.18"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Adjust XDP packet tail."}
+
+ :skb-get-xfrm-state
+ {:id 66
+  :name "bpf_skb_get_xfrm_state"
+  :signature {:return :long :args [:skb-ptr :index :xfrm-ptr :size :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Get IPsec XFRM state."}
+
+ :get-stack
+ {:id 67
+  :name "bpf_get_stack"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :size :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :trace
+  :description "Get kernel or user stack trace."}
+
+ :skb-load-bytes-relative
+ {:id 68
+  :name "bpf_skb_load_bytes_relative"
+  :signature {:return :long :args [:skb-ptr :offset :to-ptr :len :start-header]}
+  :min-kernel "4.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Load bytes relative to header."}
+
+ :fib-lookup
+ {:id 69
+  :name "bpf_fib_lookup"
+  :signature {:return :long :args [:ctx-ptr :params-ptr :plen :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:sched-cls :sched-act :xdp}
+  :category :network
+  :description "Perform FIB lookup."}
+
+ :sock-hash-update
+ {:id 70
+  :name "bpf_sock_hash_update"
+  :signature {:return :long :args [:skops-ptr :map-ptr :key-ptr :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Update socket hash map."}
+
+ :msg-redirect-hash
+ {:id 71
+  :name "bpf_msg_redirect_hash"
+  :signature {:return :long :args [:msg-ptr :map-ptr :key-ptr :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Redirect socket message using hash map."}
+
+ :sk-redirect-hash
+ {:id 72
+  :name "bpf_sk_redirect_hash"
+  :signature {:return :long :args [:skb-ptr :map-ptr :key-ptr :flags]}
+  :min-kernel "4.18"
+  :prog-types #{:sk-skb}
+  :category :socket
+  :description "Redirect socket buffer using hash map."}
+
+ :lwt-push-encap
+ {:id 73
+  :name "bpf_lwt_push_encap"
+  :signature {:return :long :args [:skb-ptr :type :hdr-ptr :len]}
+  :min-kernel "4.18"
+  :prog-types #{:lwt-in :lwt-xmit}
+  :category :network
+  :description "Push LWT encapsulation header."}
+
+ :lwt-seg6-store-bytes
+ {:id 74
+  :name "bpf_lwt_seg6_store_bytes"
+  :signature {:return :long :args [:skb-ptr :offset :from-ptr :len]}
+  :min-kernel "4.18"
+  :prog-types #{:lwt-seg6local}
+  :category :network
+  :description "Store bytes in segment routing header."}
+
+ :lwt-seg6-adjust-srh
+ {:id 75
+  :name "bpf_lwt_seg6_adjust_srh"
+  :signature {:return :long :args [:skb-ptr :offset :delta]}
+  :min-kernel "4.18"
+  :prog-types #{:lwt-seg6local}
+  :category :network
+  :description "Adjust segment routing header."}
+
+ :lwt-seg6-action
+ {:id 76
+  :name "bpf_lwt_seg6_action"
+  :signature {:return :long :args [:skb-ptr :action :param-ptr :param-len]}
+  :min-kernel "4.18"
+  :prog-types #{:lwt-seg6local}
+  :category :network
+  :description "Perform segment routing action."}
+
+ :rc-repeat
+ {:id 77
+  :name "bpf_rc_repeat"
+  :signature {:return :long :args [:ctx-ptr]}
+  :min-kernel "4.18"
+  :prog-types #{:lirc-mode2}
+  :category :lirc
+  :description "Repeat LIRC keycode."}
+
+ :rc-keydown
+ {:id 78
+  :name "bpf_rc_keydown"
+  :signature {:return :long :args [:ctx-ptr :protocol :scancode :toggle]}
+  :min-kernel "4.18"
+  :prog-types #{:lirc-mode2}
+  :category :lirc
+  :description "Generate LIRC key down event."}
+
+ :skb-cgroup-id
+ {:id 79
+  :name "bpf_skb_cgroup_id"
+  :signature {:return :u64 :args [:skb-ptr]}
+  :min-kernel "4.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :cgroup
+  :description "Get cgroup ID from skb."}
+
+ :get-current-cgroup-id
+ {:id 80
+  :name "bpf_get_current_cgroup_id"
+  :signature {:return :u64 :args []}
+  :min-kernel "4.18"
+  :prog-types :all
+  :category :cgroup
+  :description "Get current cgroup ID."}
+
+ :get-local-storage
+ {:id 81
+  :name "bpf_get_local_storage"
+  :signature {:return :ptr :args [:map-ptr :flags]}
+  :min-kernel "4.19"
+  :prog-types :all
+  :category :map
+  :description "Get pointer to local storage."}
+
+ :sk-select-reuseport
+ {:id 82
+  :name "bpf_sk_select_reuseport"
+  :signature {:return :long :args [:reuse-ptr :map-ptr :key-ptr :flags]}
+  :min-kernel "4.19"
+  :prog-types #{:sk-reuseport}
+  :category :socket
+  :description "Select socket for SO_REUSEPORT."}
+
+ :skb-ancestor-cgroup-id
+ {:id 83
+  :name "bpf_skb_ancestor_cgroup_id"
+  :signature {:return :u64 :args [:skb-ptr :ancestor-level]}
+  :min-kernel "4.19"
+  :prog-types #{:sched-cls :sched-act}
+  :category :cgroup
+  :description "Get ancestor cgroup ID from skb."}
+
+ ;; Kernel 4.20 / 5.0+
+ :sk-lookup-tcp
+ {:id 84
+  :name "bpf_sk_lookup_tcp"
+  :signature {:return :ptr :args [:ctx-ptr :tuple-ptr :tuple-size :netns :flags]}
+  :min-kernel "4.20"
+  :prog-types #{:sched-cls :sched-act :xdp :sk-skb}
+  :category :socket
+  :description "Lookup TCP socket."}
+
+ :sk-lookup-udp
+ {:id 85
+  :name "bpf_sk_lookup_udp"
+  :signature {:return :ptr :args [:ctx-ptr :tuple-ptr :tuple-size :netns :flags]}
+  :min-kernel "4.20"
+  :prog-types #{:sched-cls :sched-act :xdp :sk-skb}
+  :category :socket
+  :description "Lookup UDP socket."}
+
+ :sk-release
+ {:id 86
+  :name "bpf_sk_release"
+  :signature {:return :long :args [:sock-ptr]}
+  :min-kernel "4.20"
+  :prog-types #{:sched-cls :sched-act :xdp :sk-skb}
+  :category :socket
+  :description "Release socket reference."}
+
+ :map-push-elem
+ {:id 87
+  :name "bpf_map_push_elem"
+  :signature {:return :long :args [:map-ptr :value-ptr :flags]}
+  :min-kernel "4.20"
+  :prog-types :all
+  :category :map
+  :description "Push element to queue/stack map."}
+
+ :map-pop-elem
+ {:id 88
+  :name "bpf_map_pop_elem"
+  :signature {:return :long :args [:map-ptr :value-ptr]}
+  :min-kernel "4.20"
+  :prog-types :all
+  :category :map
+  :description "Pop element from queue/stack map."}
+
+ :map-peek-elem
+ {:id 89
+  :name "bpf_map_peek_elem"
+  :signature {:return :long :args [:map-ptr :value-ptr]}
+  :min-kernel "4.20"
+  :prog-types :all
+  :category :map
+  :description "Peek element from queue/stack map without removing."}
+
+ :msg-push-data
+ {:id 90
+  :name "bpf_msg_push_data"
+  :signature {:return :long :args [:msg-ptr :start :len :flags]}
+  :min-kernel "4.20"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Push data into socket message."}
+
+ :msg-pop-data
+ {:id 91
+  :name "bpf_msg_pop_data"
+  :signature {:return :long :args [:msg-ptr :start :len :flags]}
+  :min-kernel "5.0"
+  :prog-types #{:sk-msg}
+  :category :socket
+  :description "Pop data from socket message."}
+
+ :rc-pointer-rel
+ {:id 92
+  :name "bpf_rc_pointer_rel"
+  :signature {:return :long :args [:ctx-ptr :rel-x :rel-y]}
+  :min-kernel "5.0"
+  :prog-types #{:lirc-mode2}
+  :category :lirc
+  :description "Generate LIRC pointer relative movement."}
+
+ :spin-lock
+ {:id 93
+  :name "bpf_spin_lock"
+  :signature {:return :void :args [:lock-ptr]}
+  :min-kernel "5.1"
+  :prog-types :all
+  :category :sync
+  :description "Acquire spinlock."}
+
+ :spin-unlock
+ {:id 94
+  :name "bpf_spin_unlock"
+  :signature {:return :void :args [:lock-ptr]}
+  :min-kernel "5.1"
+  :prog-types :all
+  :category :sync
+  :description "Release spinlock."}
+
+ :sk-fullsock
+ {:id 95
+  :name "bpf_sk_fullsock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.1"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg}
+  :category :socket
+  :description "Get full socket from sock_common."}
+
+ :tcp-sock
+ {:id 96
+  :name "bpf_tcp_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.1"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg}
+  :category :socket
+  :description "Get TCP socket info."}
+
+ :skb-ecn-set-ce
+ {:id 97
+  :name "bpf_skb_ecn_set_ce"
+  :signature {:return :long :args [:skb-ptr]}
+  :min-kernel "5.1"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Set ECN CE bit in IP header."}
+
+ :get-listener-sock
+ {:id 98
+  :name "bpf_get_listener_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.1"
+  :prog-types #{:sched-cls :sched-act}
+  :category :socket
+  :description "Get listener socket."}
+
+ :skc-lookup-tcp
+ {:id 99
+  :name "bpf_skc_lookup_tcp"
+  :signature {:return :ptr :args [:ctx-ptr :tuple-ptr :tuple-size :netns :flags]}
+  :min-kernel "5.2"
+  :prog-types #{:sched-cls :sched-act :xdp}
+  :category :socket
+  :description "Lookup TCP socket (returns sock_common)."}
+
+ :tcp-check-syncookie
+ {:id 100
+  :name "bpf_tcp_check_syncookie"
+  :signature {:return :long :args [:sock-ptr :iph-ptr :iph-len :tcph-ptr :tcph-len]}
+  :min-kernel "5.2"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Check TCP SYN cookie."}
+
+ :sysctl-get-name
+ {:id 101
+  :name "bpf_sysctl_get_name"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :buf-len :flags]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :sysctl
+  :description "Get sysctl name."}
+
+ :sysctl-get-current-value
+ {:id 102
+  :name "bpf_sysctl_get_current_value"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :buf-len]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :sysctl
+  :description "Get current sysctl value."}
+
+ :sysctl-get-new-value
+ {:id 103
+  :name "bpf_sysctl_get_new_value"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :buf-len]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :sysctl
+  :description "Get new sysctl value."}
+
+ :sysctl-set-new-value
+ {:id 104
+  :name "bpf_sysctl_set_new_value"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :buf-len]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :sysctl
+  :description "Set new sysctl value."}
+
+ :strtol
+ {:id 105
+  :name "bpf_strtol"
+  :signature {:return :long :args [:buf-ptr :buf-len :flags :res-ptr]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :util
+  :description "Convert string to long."}
+
+ :strtoul
+ {:id 106
+  :name "bpf_strtoul"
+  :signature {:return :long :args [:buf-ptr :buf-len :flags :res-ptr]}
+  :min-kernel "5.2"
+  :prog-types #{:cgroup-sysctl}
+  :category :util
+  :description "Convert string to unsigned long."}
+
+ :sk-storage-get
+ {:id 107
+  :name "bpf_sk_storage_get"
+  :signature {:return :ptr :args [:map-ptr :sock-ptr :value-ptr :flags]}
+  :min-kernel "5.2"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :map
+  :description "Get socket-local storage."}
+
+ :sk-storage-delete
+ {:id 108
+  :name "bpf_sk_storage_delete"
+  :signature {:return :long :args [:map-ptr :sock-ptr]}
+  :min-kernel "5.2"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :map
+  :description "Delete socket-local storage."}
+
+ :send-signal
+ {:id 109
+  :name "bpf_send_signal"
+  :signature {:return :long :args [:sig]}
+  :min-kernel "5.3"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :signal
+  :description "Send signal to current task."}
+
+ :tcp-gen-syncookie
+ {:id 110
+  :name "bpf_tcp_gen_syncookie"
+  :signature {:return :s64 :args [:sock-ptr :iph-ptr :iph-len :tcph-ptr :tcph-len]}
+  :min-kernel "5.3"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Generate TCP SYN cookie."}
+
+ :skb-output
+ {:id 111
+  :name "bpf_skb_output"
+  :signature {:return :long :args [:ctx-ptr :map-ptr :flags :data-ptr :size]}
+  :min-kernel "5.5"
+  :prog-types #{:sched-cls :sched-act}
+  :category :perf
+  :description "Output skb to perf event."}
+
+ :probe-read-user
+ {:id 112
+  :name "bpf_probe_read_user"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "5.5"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :probe
+  :description "Read memory from user space."}
+
+ :probe-read-kernel
+ {:id 113
+  :name "bpf_probe_read_kernel"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "5.5"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :probe
+  :description "Read memory from kernel space."}
+
+ :probe-read-user-str
+ {:id 114
+  :name "bpf_probe_read_user_str"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "5.5"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :probe
+  :description "Read null-terminated string from user space."}
+
+ :probe-read-kernel-str
+ {:id 115
+  :name "bpf_probe_read_kernel_str"
+  :signature {:return :long :args [:dst-ptr :size :unsafe-ptr]}
+  :min-kernel "5.5"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :probe
+  :description "Read null-terminated string from kernel space."}
+
+ :tcp-send-ack
+ {:id 116
+  :name "bpf_tcp_send_ack"
+  :signature {:return :long :args [:tp-ptr :rcv-nxt]}
+  :min-kernel "5.5"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Send TCP ACK."}
+
+ :send-signal-thread
+ {:id 117
+  :name "bpf_send_signal_thread"
+  :signature {:return :long :args [:sig]}
+  :min-kernel "5.5"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :signal
+  :description "Send signal to current thread."}
+
+ :jiffies64
+ {:id 118
+  :name "bpf_jiffies64"
+  :signature {:return :u64 :args []}
+  :min-kernel "5.5"
+  :prog-types :all
+  :category :time
+  :description "Get jiffies64 value."}
+
+ :read-branch-records
+ {:id 119
+  :name "bpf_read_branch_records"
+  :signature {:return :long :args [:ctx-ptr :buf-ptr :size :flags]}
+  :min-kernel "5.6"
+  :prog-types #{:perf-event}
+  :category :perf
+  :description "Read CPU branch records."}
+
+ :get-ns-current-pid-tgid
+ {:id 120
+  :name "bpf_get_ns_current_pid_tgid"
+  :signature {:return :long :args [:dev :ino :nsdata-ptr :size]}
+  :min-kernel "5.7"
+  :prog-types :all
+  :category :info
+  :description "Get PID and TGID in namespace."}
+
+ :xdp-output
+ {:id 121
+  :name "bpf_xdp_output"
+  :signature {:return :long :args [:ctx-ptr :map-ptr :flags :data-ptr :size]}
+  :min-kernel "5.7"
+  :prog-types #{:xdp}
+  :category :perf
+  :description "Output XDP to perf event."}
+
+ :get-netns-cookie
+ {:id 122
+  :name "bpf_get_netns_cookie"
+  :signature {:return :u64 :args [:ctx-ptr]}
+  :min-kernel "5.7"
+  :prog-types #{:sched-cls :sched-act :sock-ops :cgroup-sock-addr}
+  :category :info
+  :description "Get network namespace cookie."}
+
+ :get-current-ancestor-cgroup-id
+ {:id 123
+  :name "bpf_get_current_ancestor_cgroup_id"
+  :signature {:return :u64 :args [:ancestor-level]}
+  :min-kernel "5.7"
+  :prog-types :all
+  :category :cgroup
+  :description "Get ancestor cgroup ID."}
+
+ :sk-assign
+ {:id 124
+  :name "bpf_sk_assign"
+  :signature {:return :long :args [:skb-ptr :sock-ptr :flags]}
+  :min-kernel "5.7"
+  :prog-types #{:sched-cls :sched-act}
+  :category :socket
+  :description "Assign socket to skb."}
+
+ :ktime-get-boot-ns
+ {:id 125
+  :name "bpf_ktime_get_boot_ns"
+  :signature {:return :u64 :args []}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :time
+  :description "Get monotonic time including suspend."}
+
+ :seq-printf
+ {:id 126
+  :name "bpf_seq_printf"
+  :signature {:return :long :args [:seq-ptr :fmt-ptr :fmt-size :data-ptr :data-len]}
+  :min-kernel "5.8"
+  :prog-types #{:iter}
+  :category :iter
+  :description "Printf to seq_file."}
+
+ :seq-write
+ {:id 127
+  :name "bpf_seq_write"
+  :signature {:return :long :args [:seq-ptr :data-ptr :len]}
+  :min-kernel "5.8"
+  :prog-types #{:iter}
+  :category :iter
+  :description "Write to seq_file."}
+
+ :sk-cgroup-id
+ {:id 128
+  :name "bpf_sk_cgroup_id"
+  :signature {:return :u64 :args [:sock-ptr]}
+  :min-kernel "5.8"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :cgroup
+  :description "Get socket cgroup ID."}
+
+ :sk-ancestor-cgroup-id
+ {:id 129
+  :name "bpf_sk_ancestor_cgroup_id"
+  :signature {:return :u64 :args [:sock-ptr :ancestor-level]}
+  :min-kernel "5.8"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :cgroup
+  :description "Get socket ancestor cgroup ID."}
+
+ :ringbuf-output
+ {:id 130
+  :name "bpf_ringbuf_output"
+  :signature {:return :long :args [:ringbuf-ptr :data-ptr :size :flags]}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :ringbuf
+  :description "Output data to ring buffer."}
+
+ :ringbuf-reserve
+ {:id 131
+  :name "bpf_ringbuf_reserve"
+  :signature {:return :ptr :args [:ringbuf-ptr :size :flags]}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :ringbuf
+  :description "Reserve space in ring buffer."}
+
+ :ringbuf-submit
+ {:id 132
+  :name "bpf_ringbuf_submit"
+  :signature {:return :void :args [:data-ptr :flags]}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :ringbuf
+  :description "Submit reserved ring buffer data."}
+
+ :ringbuf-discard
+ {:id 133
+  :name "bpf_ringbuf_discard"
+  :signature {:return :void :args [:data-ptr :flags]}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :ringbuf
+  :description "Discard reserved ring buffer data."}
+
+ :ringbuf-query
+ {:id 134
+  :name "bpf_ringbuf_query"
+  :signature {:return :u64 :args [:ringbuf-ptr :flags]}
+  :min-kernel "5.8"
+  :prog-types :all
+  :category :ringbuf
+  :description "Query ring buffer properties."}
+
+ :csum-level
+ {:id 135
+  :name "bpf_csum_level"
+  :signature {:return :long :args [:skb-ptr :level]}
+  :min-kernel "5.8"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Set checksum level."}
+
+ :skc-to-tcp6-sock
+ {:id 136
+  :name "bpf_skc_to_tcp6_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.9"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :socket
+  :description "Cast sock_common to tcp6_sock."}
+
+ :skc-to-tcp-sock
+ {:id 137
+  :name "bpf_skc_to_tcp_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.9"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :socket
+  :description "Cast sock_common to tcp_sock."}
+
+ :skc-to-tcp-timewait-sock
+ {:id 138
+  :name "bpf_skc_to_tcp_timewait_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.9"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :socket
+  :description "Cast sock_common to tcp_timewait_sock."}
+
+ :skc-to-tcp-request-sock
+ {:id 139
+  :name "bpf_skc_to_tcp_request_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.9"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :socket
+  :description "Cast sock_common to tcp_request_sock."}
+
+ :skc-to-udp6-sock
+ {:id 140
+  :name "bpf_skc_to_udp6_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.9"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg :sock-ops}
+  :category :socket
+  :description "Cast sock_common to udp6_sock."}
+
+ :get-task-stack
+ {:id 141
+  :name "bpf_get_task_stack"
+  :signature {:return :long :args [:task-ptr :buf-ptr :size :flags]}
+  :min-kernel "5.9"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :trace
+  :description "Get task stack trace."}
+
+ :load-hdr-opt
+ {:id 142
+  :name "bpf_load_hdr_opt"
+  :signature {:return :long :args [:skops-ptr :searchby-ptr :len :flags]}
+  :min-kernel "5.10"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Load TCP header option."}
+
+ :store-hdr-opt
+ {:id 143
+  :name "bpf_store_hdr_opt"
+  :signature {:return :long :args [:skops-ptr :from-ptr :len :flags]}
+  :min-kernel "5.10"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Store TCP header option."}
+
+ :reserve-hdr-opt
+ {:id 144
+  :name "bpf_reserve_hdr_opt"
+  :signature {:return :long :args [:skops-ptr :len :flags]}
+  :min-kernel "5.10"
+  :prog-types #{:sock-ops}
+  :category :socket
+  :description "Reserve space for TCP header option."}
+
+ :inode-storage-get
+ {:id 145
+  :name "bpf_inode_storage_get"
+  :signature {:return :ptr :args [:map-ptr :inode-ptr :value-ptr :flags]}
+  :min-kernel "5.10"
+  :prog-types #{:lsm}
+  :category :map
+  :description "Get inode-local storage."}
+
+ :inode-storage-delete
+ {:id 146
+  :name "bpf_inode_storage_delete"
+  :signature {:return :long :args [:map-ptr :inode-ptr]}
+  :min-kernel "5.10"
+  :prog-types #{:lsm}
+  :category :map
+  :description "Delete inode-local storage."}
+
+ :d-path
+ {:id 147
+  :name "bpf_d_path"
+  :signature {:return :long :args [:path-ptr :buf-ptr :sz]}
+  :min-kernel "5.10"
+  :prog-types #{:lsm :fentry :fexit}
+  :category :fs
+  :description "Get file path from struct path."}
+
+ :ima-inode-hash
+ {:id 148
+  :name "bpf_ima_inode_hash"
+  :signature {:return :long :args [:inode-ptr :dst-ptr :size]}
+  :min-kernel "5.11"
+  :prog-types #{:lsm}
+  :category :security
+  :description "Get IMA hash of inode."}
+
+ :sock-from-file
+ {:id 149
+  :name "bpf_sock_from_file"
+  :signature {:return :ptr :args [:file-ptr]}
+  :min-kernel "5.11"
+  :prog-types #{:lsm}
+  :category :socket
+  :description "Get socket from file pointer."}
+
+ :check-mtu
+ {:id 150
+  :name "bpf_check_mtu"
+  :signature {:return :long :args [:ctx-ptr :ifindex :mtu-ptr :len :flags]}
+  :min-kernel "5.12"
+  :prog-types #{:sched-cls :sched-act :xdp}
+  :category :network
+  :description "Check MTU for packet."}
+
+ :for-each-map-elem
+ {:id 151
+  :name "bpf_for_each_map_elem"
+  :signature {:return :long :args [:map-ptr :callback-fn :callback-ctx-ptr :flags]}
+  :min-kernel "5.13"
+  :prog-types :all
+  :category :map
+  :description "Iterate over map elements with callback."}
+
+ :snprintf
+ {:id 152
+  :name "bpf_snprintf"
+  :signature {:return :long :args [:str-ptr :str-size :fmt-ptr :data-ptr :data-len]}
+  :min-kernel "5.13"
+  :prog-types :all
+  :category :util
+  :description "Format string to buffer."}
+
+ :sys-bpf
+ {:id 153
+  :name "bpf_sys_bpf"
+  :signature {:return :long :args [:cmd :attr-ptr :attr-size]}
+  :min-kernel "5.14"
+  :prog-types #{:syscall}
+  :category :syscall
+  :description "Execute bpf syscall from BPF."}
+
+ :btf-find-by-name-kind
+ {:id 154
+  :name "bpf_btf_find_by_name_kind"
+  :signature {:return :long :args [:name-ptr :name-sz :kind :flags]}
+  :min-kernel "5.14"
+  :prog-types #{:syscall}
+  :category :btf
+  :description "Find BTF type by name and kind."}
+
+ :sys-close
+ {:id 155
+  :name "bpf_sys_close"
+  :signature {:return :long :args [:fd]}
+  :min-kernel "5.14"
+  :prog-types #{:syscall}
+  :category :syscall
+  :description "Close file descriptor from BPF."}
+
+ :timer-init
+ {:id 156
+  :name "bpf_timer_init"
+  :signature {:return :long :args [:timer-ptr :map-ptr :flags]}
+  :min-kernel "5.15"
+  :prog-types :all
+  :category :timer
+  :description "Initialize BPF timer."}
+
+ :timer-set-callback
+ {:id 157
+  :name "bpf_timer_set_callback"
+  :signature {:return :long :args [:timer-ptr :callback-fn]}
+  :min-kernel "5.15"
+  :prog-types :all
+  :category :timer
+  :description "Set timer callback function."}
+
+ :timer-start
+ {:id 158
+  :name "bpf_timer_start"
+  :signature {:return :long :args [:timer-ptr :nsecs :flags]}
+  :min-kernel "5.15"
+  :prog-types :all
+  :category :timer
+  :description "Start BPF timer."}
+
+ :timer-cancel
+ {:id 159
+  :name "bpf_timer_cancel"
+  :signature {:return :long :args [:timer-ptr]}
+  :min-kernel "5.15"
+  :prog-types :all
+  :category :timer
+  :description "Cancel BPF timer."}
+
+ :get-func-ip
+ {:id 160
+  :name "bpf_get_func_ip"
+  :signature {:return :u64 :args [:ctx-ptr]}
+  :min-kernel "5.15"
+  :prog-types #{:kprobe :fentry :fexit}
+  :category :trace
+  :description "Get function IP address."}
+
+ :get-attach-cookie
+ {:id 161
+  :name "bpf_get_attach_cookie"
+  :signature {:return :u64 :args [:ctx-ptr]}
+  :min-kernel "5.15"
+  :prog-types #{:kprobe :fentry :fexit :perf-event}
+  :category :info
+  :description "Get attach cookie value."}
+
+ :task-pt-regs
+ {:id 162
+  :name "bpf_task_pt_regs"
+  :signature {:return :ptr :args [:task-ptr]}
+  :min-kernel "5.15"
+  :prog-types #{:kprobe :tracepoint}
+  :category :trace
+  :description "Get task pt_regs."}
+
+ :get-branch-snapshot
+ {:id 163
+  :name "bpf_get_branch_snapshot"
+  :signature {:return :long :args [:buf-ptr :size :flags]}
+  :min-kernel "5.16"
+  :prog-types :all
+  :category :perf
+  :description "Get CPU branch snapshot."}
+
+ :trace-vprintk
+ {:id 164
+  :name "bpf_trace_vprintk"
+  :signature {:return :long :args [:fmt-ptr :fmt-size :data-ptr :data-len]}
+  :min-kernel "5.16"
+  :prog-types #{:kprobe :tracepoint :perf-event :raw-tracepoint}
+  :category :debug
+  :description "Trace print with variadic args."}
+
+ :skc-to-unix-sock
+ {:id 165
+  :name "bpf_skc_to_unix_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "5.16"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg}
+  :category :socket
+  :description "Cast sock_common to unix_sock."}
+
+ :kallsyms-lookup-name
+ {:id 166
+  :name "bpf_kallsyms_lookup_name"
+  :signature {:return :long :args [:name-ptr :name-sz :flags :res-ptr]}
+  :min-kernel "5.16"
+  :prog-types #{:syscall}
+  :category :syscall
+  :description "Lookup kernel symbol address."}
+
+ :find-vma
+ {:id 167
+  :name "bpf_find_vma"
+  :signature {:return :long :args [:task-ptr :addr :callback-fn :callback-ctx-ptr :flags]}
+  :min-kernel "5.17"
+  :prog-types #{:kprobe :tracepoint}
+  :category :memory
+  :description "Find VMA for address."}
+
+ :loop
+ {:id 168
+  :name "bpf_loop"
+  :signature {:return :long :args [:nr-loops :callback-fn :callback-ctx-ptr :flags]}
+  :min-kernel "5.17"
+  :prog-types :all
+  :category :control
+  :description "Execute callback in bounded loop."}
+
+ :strncmp
+ {:id 169
+  :name "bpf_strncmp"
+  :signature {:return :long :args [:s1-ptr :u32 :s2-ptr]}
+  :min-kernel "5.17"
+  :prog-types :all
+  :category :util
+  :description "Compare strings."}
+
+ :get-func-arg
+ {:id 170
+  :name "bpf_get_func_arg"
+  :signature {:return :long :args [:ctx-ptr :n :value-ptr]}
+  :min-kernel "5.17"
+  :prog-types #{:fentry :fexit}
+  :category :trace
+  :description "Get function argument."}
+
+ :get-func-ret
+ {:id 171
+  :name "bpf_get_func_ret"
+  :signature {:return :long :args [:ctx-ptr :value-ptr]}
+  :min-kernel "5.17"
+  :prog-types #{:fexit}
+  :category :trace
+  :description "Get function return value."}
+
+ :get-func-arg-cnt
+ {:id 172
+  :name "bpf_get_func_arg_cnt"
+  :signature {:return :long :args [:ctx-ptr]}
+  :min-kernel "5.17"
+  :prog-types #{:fentry :fexit}
+  :category :trace
+  :description "Get function argument count."}
+
+ :get-retval
+ {:id 173
+  :name "bpf_get_retval"
+  :signature {:return :long :args []}
+  :min-kernel "5.18"
+  :prog-types #{:cgroup-sysctl :cgroup-sockopt}
+  :category :cgroup
+  :description "Get program return value."}
+
+ :set-retval
+ {:id 174
+  :name "bpf_set_retval"
+  :signature {:return :long :args [:retval]}
+  :min-kernel "5.18"
+  :prog-types #{:cgroup-sysctl :cgroup-sockopt}
+  :category :cgroup
+  :description "Set program return value."}
+
+ :xdp-get-buff-len
+ {:id 175
+  :name "bpf_xdp_get_buff_len"
+  :signature {:return :u64 :args [:xdp-ptr]}
+  :min-kernel "5.18"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Get XDP buffer length."}
+
+ :xdp-load-bytes
+ {:id 176
+  :name "bpf_xdp_load_bytes"
+  :signature {:return :long :args [:xdp-ptr :offset :buf-ptr :len]}
+  :min-kernel "5.18"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Load bytes from XDP buffer."}
+
+ :xdp-store-bytes
+ {:id 177
+  :name "bpf_xdp_store_bytes"
+  :signature {:return :long :args [:xdp-ptr :offset :buf-ptr :len]}
+  :min-kernel "5.18"
+  :prog-types #{:xdp}
+  :category :xdp
+  :description "Store bytes to XDP buffer."}
+
+ :copy-from-user
+ {:id 178
+  :name "bpf_copy_from_user"
+  :signature {:return :long :args [:dst-ptr :size :user-ptr]}
+  :min-kernel "5.18"
+  :prog-types #{:kprobe :tracepoint}
+  :category :probe
+  :description "Copy from user space (sleepable)."}
+
+ :snprintf-btf
+ {:id 179
+  :name "bpf_snprintf_btf"
+  :signature {:return :long :args [:str-ptr :str-size :ptr :type-id :flags]}
+  :min-kernel "5.18"
+  :prog-types :all
+  :category :btf
+  :description "Format BTF type to string."}
+
+ :seq-printf-btf
+ {:id 180
+  :name "bpf_seq_printf_btf"
+  :signature {:return :long :args [:seq-ptr :ptr :type-id :flags]}
+  :min-kernel "5.18"
+  :prog-types #{:iter}
+  :category :btf
+  :description "Printf BTF type to seq_file."}
+
+ :skb-cgroup-classid
+ {:id 181
+  :name "bpf_skb_cgroup_classid"
+  :signature {:return :u64 :args [:skb-ptr]}
+  :min-kernel "5.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :cgroup
+  :description "Get cgroup classid from skb."}
+
+ :redirect-neigh
+ {:id 182
+  :name "bpf_redirect_neigh"
+  :signature {:return :long :args [:ifindex :params-ptr :plen :flags]}
+  :min-kernel "5.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Redirect with neighbor lookup."}
+
+ :per-cpu-ptr
+ {:id 183
+  :name "bpf_per_cpu_ptr"
+  :signature {:return :ptr :args [:percpu-ptr :cpu]}
+  :min-kernel "5.18"
+  :prog-types :all
+  :category :util
+  :description "Get per-CPU pointer."}
+
+ :this-cpu-ptr
+ {:id 184
+  :name "bpf_this_cpu_ptr"
+  :signature {:return :ptr :args [:percpu-ptr]}
+  :min-kernel "5.18"
+  :prog-types :all
+  :category :util
+  :description "Get this CPU's pointer."}
+
+ :redirect-peer
+ {:id 185
+  :name "bpf_redirect_peer"
+  :signature {:return :long :args [:ifindex :flags]}
+  :min-kernel "5.18"
+  :prog-types #{:sched-cls :sched-act}
+  :category :network
+  :description "Redirect to peer device."}
+
+ :task-storage-get
+ {:id 186
+  :name "bpf_task_storage_get"
+  :signature {:return :ptr :args [:map-ptr :task-ptr :value-ptr :flags]}
+  :min-kernel "5.18"
+  :prog-types #{:lsm :fentry :fexit}
+  :category :map
+  :description "Get task-local storage."}
+
+ :task-storage-delete
+ {:id 187
+  :name "bpf_task_storage_delete"
+  :signature {:return :long :args [:map-ptr :task-ptr]}
+  :min-kernel "5.18"
+  :prog-types #{:lsm :fentry :fexit}
+  :category :map
+  :description "Delete task-local storage."}
+
+ :get-current-task-btf
+ {:id 188
+  :name "bpf_get_current_task_btf"
+  :signature {:return :ptr :args []}
+  :min-kernel "5.18"
+  :prog-types :all
+  :category :info
+  :description "Get current task with BTF."}
+
+ :bprm-opts-set
+ {:id 189
+  :name "bpf_bprm_opts_set"
+  :signature {:return :long :args [:bprm-ptr :flags]}
+  :min-kernel "5.18"
+  :prog-types #{:lsm}
+  :category :security
+  :description "Set bprm options."}
+
+ :ktime-get-coarse-ns
+ {:id 190
+  :name "bpf_ktime_get_coarse_ns"
+  :signature {:return :u64 :args []}
+  :min-kernel "5.18"
+  :prog-types :all
+  :category :time
+  :description "Get coarse-grained time."}
+
+ :ima-file-hash
+ {:id 191
+  :name "bpf_ima_file_hash"
+  :signature {:return :long :args [:file-ptr :dst-ptr :size]}
+  :min-kernel "5.18"
+  :prog-types #{:lsm}
+  :category :security
+  :description "Get IMA hash of file."}
+
+ :kptr-xchg
+ {:id 194
+  :name "bpf_kptr_xchg"
+  :signature {:return :ptr :args [:map-value-ptr :ptr]}
+  :min-kernel "5.19"
+  :prog-types :all
+  :category :util
+  :description "Exchange kernel pointer."}
+
+ :map-lookup-percpu-elem
+ {:id 195
+  :name "bpf_map_lookup_percpu_elem"
+  :signature {:return :ptr :args [:map-ptr :key-ptr :cpu]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :map
+  :description "Lookup per-CPU map element for specific CPU."}
+
+ :skc-to-mptcp-sock
+ {:id 196
+  :name "bpf_skc_to_mptcp_sock"
+  :signature {:return :ptr :args [:sock-ptr]}
+  :min-kernel "6.0"
+  :prog-types #{:sched-cls :sched-act :sk-skb :sk-msg}
+  :category :socket
+  :description "Cast sock_common to mptcp_sock."}
+
+ :dynptr-from-mem
+ {:id 197
+  :name "bpf_dynptr_from_mem"
+  :signature {:return :long :args [:data-ptr :size :flags :ptr-ptr]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :dynptr
+  :description "Create dynptr from memory."}
+
+ :ringbuf-reserve-dynptr
+ {:id 198
+  :name "bpf_ringbuf_reserve_dynptr"
+  :signature {:return :long :args [:ringbuf-ptr :size :flags :ptr-ptr]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :ringbuf
+  :description "Reserve ringbuf space as dynptr."}
+
+ :ringbuf-submit-dynptr
+ {:id 199
+  :name "bpf_ringbuf_submit_dynptr"
+  :signature {:return :void :args [:ptr-ptr :flags]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :ringbuf
+  :description "Submit dynptr to ringbuf."}
+
+ :ringbuf-discard-dynptr
+ {:id 200
+  :name "bpf_ringbuf_discard_dynptr"
+  :signature {:return :void :args [:ptr-ptr :flags]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :ringbuf
+  :description "Discard reserved dynptr."}
+
+ :dynptr-read
+ {:id 201
+  :name "bpf_dynptr_read"
+  :signature {:return :long :args [:dst-ptr :len :src-ptr :offset :flags]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :dynptr
+  :description "Read from dynptr."}
+
+ :dynptr-write
+ {:id 202
+  :name "bpf_dynptr_write"
+  :signature {:return :long :args [:dst-ptr :offset :src-ptr :len :flags]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :dynptr
+  :description "Write to dynptr."}
+
+ :dynptr-data
+ {:id 203
+  :name "bpf_dynptr_data"
+  :signature {:return :ptr :args [:ptr-ptr :offset :len]}
+  :min-kernel "6.0"
+  :prog-types :all
+  :category :dynptr
+  :description "Get pointer to dynptr data."}
+
+ :tcp-raw-gen-syncookie-ipv4
+ {:id 204
+  :name "bpf_tcp_raw_gen_syncookie_ipv4"
+  :signature {:return :s64 :args [:iph-ptr :th-ptr :th-len]}
+  :min-kernel "6.0"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Generate IPv4 TCP SYN cookie (raw)."}
+
+ :tcp-raw-gen-syncookie-ipv6
+ {:id 205
+  :name "bpf_tcp_raw_gen_syncookie_ipv6"
+  :signature {:return :s64 :args [:iph-ptr :th-ptr :th-len]}
+  :min-kernel "6.0"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Generate IPv6 TCP SYN cookie (raw)."}
+
+ :tcp-raw-check-syncookie-ipv4
+ {:id 206
+  :name "bpf_tcp_raw_check_syncookie_ipv4"
+  :signature {:return :long :args [:iph-ptr :th-ptr]}
+  :min-kernel "6.0"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Check IPv4 TCP SYN cookie (raw)."}
+
+ :tcp-raw-check-syncookie-ipv6
+ {:id 207
+  :name "bpf_tcp_raw_check_syncookie_ipv6"
+  :signature {:return :long :args [:iph-ptr :th-ptr]}
+  :min-kernel "6.0"
+  :prog-types #{:xdp}
+  :category :socket
+  :description "Check IPv6 TCP SYN cookie (raw)."}
+
+ :ktime-get-tai-ns
+ {:id 208
+  :name "bpf_ktime_get_tai_ns"
+  :signature {:return :u64 :args []}
+  :min-kernel "6.1"
+  :prog-types :all
+  :category :time
+  :description "Get TAI (International Atomic Time) in nanoseconds."}
+
+ :user-ringbuf-drain
+ {:id 209
+  :name "bpf_user_ringbuf_drain"
+  :signature {:return :long :args [:map-ptr :callback-fn :ctx-ptr :flags]}
+  :min-kernel "6.1"
+  :prog-types :all
+  :category :ringbuf
+  :description "Drain user ring buffer with callback."}
+
+ :cgrp-storage-get
+ {:id 210
+  :name "bpf_cgrp_storage_get"
+  :signature {:return :ptr :args [:map-ptr :cgroup-ptr :value-ptr :flags]}
+  :min-kernel "6.2"
+  :prog-types :all
+  :category :map
+  :description "Get cgroup-local storage."}
+
+ :cgrp-storage-delete
+ {:id 211
+  :name "bpf_cgrp_storage_delete"
+  :signature {:return :long :args [:map-ptr :cgroup-ptr]}
+  :min-kernel "6.2"
+  :prog-types :all
+  :category :map
+  :description "Delete cgroup-local storage."}
+}

@@ -515,7 +515,7 @@
   and other packet-processing programs.
 
   Parameters:
-  - prog: BpfProgram to test
+  - prog: BpfProgram to test (or program fd as integer)
   - opts: Map with:
     - :data-in - Input data (byte array, e.g., packet data)
     - :data-size-out - Size of output buffer (default: size of data-in or 256)
@@ -523,34 +523,45 @@
     - :ctx-size-out - Size of context output buffer (default: 0)
     - :repeat - Number of times to run (default: 1, for benchmarking)
     - :flags - Test run flags (default: 0)
+    - :cpu - CPU to run on (default: 0)
 
   Returns a map with:
-  - :retval - Return value from BPF program (e.g., XDP_PASS, XDP_DROP)
+  - :retval - Return value from BPF program (e.g., XDP_PASS=2, XDP_DROP=1)
   - :data-out - Output data (modified packet)
   - :ctx-out - Output context (if ctx-size-out > 0)
   - :duration-ns - Execution time in nanoseconds (average if repeat > 1)
+  - :data-size-out - Actual size of output data
 
   Example:
     ;; Test an XDP program with a synthetic packet
     (test-run-program xdp-prog
-      {:data-in (build-test-packet ...)
+      {:data-in (build-test-packet :tcp {})
        :repeat 1000})
     ;; => {:retval 2 :data-out [...] :duration-ns 150}
 
-  Note: This feature requires the BPF_PROG_TEST_RUN syscall support
-  which is not yet fully implemented in the syscall module."
-  [^BpfProgram prog {:keys [data-in data-size-out ctx-in ctx-size-out repeat flags]
-                     :or {data-size-out nil
-                          ctx-in nil
-                          ctx-size-out 0
-                          repeat 1
-                          flags 0}}]
-  ;; TODO: Implement prog-test-run in syscall.clj
-  ;; The BPF_PROG_TEST_RUN command (10) needs to be added to the syscall module
-  (throw (ex-info "BPF_PROG_TEST_RUN not yet implemented in syscall module"
-                  {:prog-name (:name prog)
-                   :prog-fd (:fd prog)
-                   :data-in-size (when data-in (count data-in))})))
+  Supported program types:
+  - XDP (xdp_md context)
+  - Sched CLS/ACT (sk_buff context)
+  - Socket filter
+  - Raw tracepoint
+  - Flow dissector
+
+  Note: Requires kernel 4.12+ for basic support, 5.10+ for full features."
+  [prog {:keys [data-in data-size-out ctx-in ctx-size-out repeat flags cpu]
+         :or {data-size-out nil
+              ctx-in nil
+              ctx-size-out 0
+              repeat 1
+              flags 0
+              cpu 0}
+         :as opts}]
+  (let [prog-fd (if (integer? prog)
+                  prog
+                  (:fd prog))]
+    (when-not prog-fd
+      (throw (ex-info "Invalid program: no file descriptor"
+                      {:prog prog})))
+    (syscall/prog-test-run prog-fd opts)))
 
 (defn build-test-packet
   "Build a test packet for BPF program testing.
