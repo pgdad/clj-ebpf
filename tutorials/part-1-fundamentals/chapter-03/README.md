@@ -161,18 +161,46 @@ Wide Instruction (128 bits, for 64-bit immediates):
 
 #### Atomic Operations (kernel 5.12+)
 
+The `clj-ebpf.dsl.atomic` module provides comprehensive atomic memory operations:
+
 ```clojure
-;; Atomic add
-(bpf/atomic-xadd :dw :r10 -8 1)
-;; Atomically: [r10 - 8] += 1
+(require '[clj-ebpf.dsl.atomic :as atomic])
+
+;; Basic atomic operations
+(atomic/atomic-add :dw :r10 :r1 -8)    ; [r10 - 8] += r1
+(atomic/atomic-or  :dw :r10 :r1 -8)    ; [r10 - 8] |= r1
+(atomic/atomic-and :dw :r10 :r1 -8)    ; [r10 - 8] &= r1
+(atomic/atomic-xor :dw :r10 :r1 -8)    ; [r10 - 8] ^= r1
 
 ;; Atomic exchange
-(bpf/atomic-xchg :dw :r10 -8 :r1)
+(atomic/atomic-xchg :dw :r10 :r1 -8)
 ;; Atomically: tmp = [r10 - 8]; [r10 - 8] = r1; r1 = tmp
 
 ;; Compare and exchange
-(bpf/atomic-cmpxchg :dw :r10 -8 :r0 :r1)
+(atomic/atomic-cmpxchg :dw :r10 :r1 -8)
 ;; Atomically: if ([r10 - 8] == r0) [r10 - 8] = r1
+
+;; Fetch variants (return old value in src register)
+(atomic/atomic-fetch-add :dw :r10 :r1 -8)  ; r1 = old value; [r10-8] += r1
+(atomic/atomic-fetch-or  :dw :r10 :r1 -8)
+(atomic/atomic-fetch-and :dw :r10 :r1 -8)
+(atomic/atomic-fetch-xor :dw :r10 :r1 -8)
+```
+
+High-level atomic patterns:
+
+```clojure
+;; Increment/decrement
+(atomic/atomic-inc :dw :r10 :r1 -8)    ; [r10 - 8]++
+(atomic/atomic-dec :dw :r10 :r1 -8)    ; [r10 - 8]--
+
+;; Bit operations
+(atomic/atomic-set-bit :dw :r10 :r1 3 -8)    ; Set bit 3
+(atomic/atomic-clear-bit :dw :r10 :r1 3 -8)  ; Clear bit 3
+(atomic/atomic-toggle-bit :dw :r10 :r1 3 -8) ; Toggle bit 3
+
+;; Check kernel version support
+(atomic/atomic-available? :fetch-add "5.12")  ; => true
 ```
 
 ### Jump Operations

@@ -5,9 +5,11 @@
 ## Learning Objectives
 
 By the end of this chapter, you will:
-- Master the 210+ BPF helper functions available
+- Master the 211 BPF helper functions available
 - Understand helper categories and their use cases
 - Use helpers for maps, time, process info, networking, and tracing
+- Search and filter helpers by name, category, and kernel version
+- Register custom helpers for experimental or vendor-specific functions
 - Build practical monitoring and profiling tools
 - Handle helper compatibility and kernel version requirements
 
@@ -392,14 +394,20 @@ Helpers have different availability based on program type:
 
 ## 4.4 clj-ebpf Helper API
 
+### Data Source
+
+Helper metadata is loaded from an external EDN file (`resources/bpf-helpers.edn`), making it easy to update and extend without changing code. This file contains all 211 BPF helper definitions.
+
 ### Querying Helpers
 
 ```clojure
+(require '[clj-ebpf.helpers :as helpers])
+
 ;; Get all helper metadata
-bpf/helper-metadata  ; Map of all 210+ helpers
+helpers/helper-metadata  ; Map of all 211 helpers
 
 ;; Get specific helper info
-(bpf/get-helper-info :map-lookup-elem)
+(helpers/get-helper-info :map-lookup-elem)
 ;; => {:id 1
 ;;     :name "bpf_map_lookup_elem"
 ;;     :signature {:return :ptr :args [:map-ptr :key-ptr]}
@@ -409,13 +417,87 @@ bpf/helper-metadata  ; Map of all 210+ helpers
 ;;     :description "Lookup map element by key."}
 
 ;; Get helpers by category
-(bpf/helpers-by-category :map)
+(helpers/helpers-by-category :map)
 ;; => {:map-lookup-elem {...}, :map-update-elem {...}, ...}
 
 ;; Check availability
-(bpf/available-helpers :kprobe)
+(helpers/available-helpers :kprobe)
 ;; => List of helpers available for kprobe programs
 ```
+
+### Searching Helpers
+
+Find helpers by name or description:
+
+```clojure
+;; Search for helpers by keyword
+(helpers/search-helpers "socket")
+;; => {:sk-lookup-tcp {...}, :sk-lookup-udp {...}, :get-socket-cookie {...}, ...}
+
+;; Search is case-insensitive and matches name, description, and C function name
+(helpers/search-helpers "ringbuf")
+;; => {:ringbuf-reserve {...}, :ringbuf-submit {...}, :ringbuf-discard {...}, ...}
+```
+
+### Filtering by Kernel Version
+
+Find helpers available for specific kernel versions:
+
+```clojure
+;; Get helpers introduced since kernel 5.8
+(helpers/helpers-since-kernel "5.8")
+;; => {:ringbuf-reserve {...}, :ktime-get-boot-ns {...}, ...}
+
+;; Get helpers available in kernel 4.18 or earlier
+(helpers/helpers-until-kernel "4.18")
+;; => {:map-lookup-elem {...}, :get-current-pid-tgid {...}, ...}
+
+;; Useful for ensuring compatibility with target systems
+(when-not (empty? (helpers/helpers-since-kernel "6.0"))
+  (println "Warning: Using helpers that require kernel 6.0+"))
+```
+
+### Helper Statistics
+
+Get an overview of available helpers:
+
+```clojure
+(helpers/helper-stats)
+;; => {:total 211
+;;     :by-category {:map 12, :process 8, :network 45, :socket 18, ...}
+;;     :by-prog-type {:all 89, :specific 122}
+;;     :kernel-ranges {:3.x 15, :4.x 98, :5.x 85, :6.x 13}}
+```
+
+### Registering Custom Helpers
+
+For experimental or new kernel helpers not yet in the default database:
+
+```clojure
+;; Register a custom helper
+(helpers/register-custom-helper!
+  :my-custom-helper
+  {:id 999
+   :name "bpf_my_custom_helper"
+   :signature {:return :long :args [:ctx :u64 :u64]}
+   :min-kernel "6.5"
+   :prog-types #{:kprobe :tracepoint}
+   :category :custom
+   :description "My custom helper function."})
+
+;; Now it's available in helper-metadata
+(helpers/get-helper-info :my-custom-helper)
+;; => {:id 999, :name "bpf_my_custom_helper", ...}
+
+;; And in searches
+(helpers/search-helpers "custom")
+;; => {:my-custom-helper {...}}
+```
+
+This is useful for:
+- Testing new helpers from development kernels
+- Adding vendor-specific helpers
+- Creating documentation for internal helpers
 
 ### Using Helper Wrappers
 

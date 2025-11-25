@@ -79,6 +79,67 @@ This chapter covers:
 - Can't test kernel interactions
 - May miss integration issues
 
+### Using BPF_PROG_TEST_RUN
+
+The kernel provides `BPF_PROG_TEST_RUN` for testing BPF programs without attaching them to hooks. clj-ebpf exposes this through `test-run-program`:
+
+```clojure
+(require '[clj-ebpf.programs :as programs])
+
+;; Load an XDP program
+(let [prog (programs/load-program xdp-bytecode :xdp)]
+
+  ;; Test with synthetic packet data
+  (let [test-packet (byte-array [0x45 0x00 0x00 0x28 ...])  ; IP header
+        result (programs/test-run-program prog
+                 {:data-in test-packet
+                  :repeat 1})]
+
+    ;; Check return value
+    (is (= 2 (:retval result)))  ; XDP_PASS = 2
+
+    ;; Check modified packet (if program modifies it)
+    (when-let [data-out (:data-out result)]
+      (is (seq data-out) "Program should produce output data"))
+
+    ;; Check execution time
+    (println "Execution time:" (:duration-ns result) "ns")))
+```
+
+**Test Run Options**:
+
+```clojure
+(programs/test-run-program prog
+  {:data-in     packet-bytes     ; Input packet data
+   :data-size-out 1500           ; Max output size (optional)
+   :ctx-in      ctx-bytes        ; Program context (optional)
+   :ctx-size-out 64              ; Max context output size (optional)
+   :repeat      100              ; Number of iterations (default 1)
+   :flags       0                ; Test flags (optional)
+   :cpu         0})              ; CPU to run on (optional)
+```
+
+**Result Map**:
+
+```clojure
+{:retval      2                  ; Program return value
+ :data-out    #<byte-array>      ; Modified packet data
+ :ctx-out     #<byte-array>      ; Modified context
+ :duration-ns 1234}              ; Execution time (nanoseconds)
+```
+
+**Use Cases**:
+- Test XDP packet processing without network attachment
+- Benchmark program performance with `:repeat`
+- Verify packet transformations
+- Test TC (traffic control) programs
+- Regression testing in CI/CD
+
+**Limitations**:
+- Only works with certain program types (XDP, TC, sk_lookup, etc.)
+- Cannot test kprobes, tracepoints, or cgroup programs this way
+- Requires CAP_BPF or root privileges
+
 ### 2. Integration Testing
 
 **Goal**: Test BPF program with real kernel events.

@@ -288,10 +288,34 @@ Focused imports for cleaner code:
 (:require [clj-ebpf.core :as bpf])
 
 ;; Import specific DSL modules:
-(:require [clj-ebpf.dsl.core :as dsl]     ; Unified DSL
-          [clj-ebpf.dsl.alu :as alu]      ; ALU operations
-          [clj-ebpf.dsl.mem :as mem]      ; Memory operations
-          [clj-ebpf.dsl.jump :as jmp])    ; Jump/control flow
+(:require [clj-ebpf.dsl.core :as dsl]       ; Unified DSL
+          [clj-ebpf.dsl.alu :as alu]        ; ALU operations
+          [clj-ebpf.dsl.mem :as mem]        ; Memory operations
+          [clj-ebpf.dsl.jump :as jmp]       ; Jump/control flow
+          [clj-ebpf.dsl.atomic :as atomic]) ; Atomic operations
+```
+
+### Atomic Operations (`clj-ebpf.dsl.atomic`)
+
+Comprehensive atomic memory operations for concurrent BPF programs:
+
+```clojure
+(require '[clj-ebpf.dsl.atomic :as atomic])
+
+;; Basic atomic operations
+(atomic/atomic-add :dw :r10 :r1 -8)     ; [r10 - 8] += r1
+(atomic/atomic-xchg :dw :r10 :r1 -8)    ; Exchange
+(atomic/atomic-cmpxchg :dw :r10 :r1 -8) ; Compare-exchange
+
+;; Fetch variants (return old value)
+(atomic/atomic-fetch-add :dw :r10 :r1 -8)
+
+;; High-level patterns
+(atomic/atomic-inc :dw :r10 :r1 -8)     ; Increment
+(atomic/atomic-set-bit :dw :r10 :r1 3 -8) ; Set bit 3
+
+;; Check kernel support
+(atomic/atomic-available? :fetch-add "5.12")
 ```
 
 ### Backpressure Consumer (`clj-ebpf.events`)
@@ -507,6 +531,10 @@ See [Chapter 12 - Performance Optimization](part-3-advanced/chapter-03/README.md
 ---
 
 ## 📖 Additional Resources
+
+### clj-ebpf Documentation
+- [Architecture Decision Records](../docs/adr/README.md) - Design decisions and rationale
+- [API Documentation](../docs/guides/intro.md) - Generated with codox (`clj -X:codox`)
 
 ### eBPF Documentation
 - [eBPF.io Official Docs](https://ebpf.io)
