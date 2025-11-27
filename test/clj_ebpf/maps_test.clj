@@ -223,6 +223,43 @@
         ;; Attempting to use the FD should fail
         (is (some? @fd-atom))))))
 
+(deftest test-enoent-handling
+  (when (linux-with-bpf?)
+    (testing "ENOENT handling for non-existent keys"
+      (maps/with-map [m {:map-type :hash
+                        :key-size 4
+                        :value-size 4
+                        :max-entries 10
+                        :map-name "test_enoent"
+                        :key-serializer utils/int->bytes
+                        :key-deserializer utils/bytes->int
+                        :value-serializer utils/int->bytes
+                        :value-deserializer utils/bytes->int}]
+        ;; Lookup on non-existent key should return nil (not throw)
+        (is (nil? (maps/map-lookup m 42)))
+
+        ;; Delete on non-existent key should return false (not throw)
+        (is (false? (maps/map-delete m 42)))
+
+        ;; Iteration on empty map should return empty sequences
+        (is (empty? (maps/map-keys m)))
+        (is (empty? (maps/map-values m)))
+        (is (empty? (maps/map-entries m)))
+        (is (= 0 (maps/map-count m)))
+
+        ;; After adding entries, iteration should work correctly
+        (maps/map-update m 1 100)
+        (maps/map-update m 2 200)
+        (is (= #{1 2} (set (maps/map-keys m))))
+        (is (= #{100 200} (set (maps/map-values m))))
+        (is (= {1 100, 2 200} (into {} (maps/map-entries m))))
+
+        ;; After deleting all entries, iteration should work again on empty map
+        (maps/map-delete m 1)
+        (maps/map-delete m 2)
+        (is (empty? (maps/map-keys m)))
+        (is (= 0 (maps/map-count m)))))))
+
 (deftest test-ringbuf-map-creation
   (when (linux-with-bpf?)
     (testing "Create ring buffer map"

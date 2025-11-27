@@ -148,7 +148,7 @@
       (syscall/map-lookup-elem (:fd bpf-map) key-seg value-seg)
       (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil ; Key not found
           (throw e))))))
 
@@ -176,7 +176,7 @@
       (syscall/map-delete-elem (:fd bpf-map) key-seg)
       true
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           false ; Key not found
           (throw e))))))
 
@@ -190,7 +190,7 @@
       (syscall/map-get-next-key (:fd bpf-map) key-seg next-key-seg)
       (segment->key bpf-map next-key-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil ; No more keys
           (throw e))))))
 
@@ -623,7 +623,7 @@
       (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
       (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil  ; Stack is empty
           (throw e))))))
 
@@ -640,7 +640,7 @@
       (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
       (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil  ; Stack is empty
           (throw e))))))
 
@@ -671,7 +671,7 @@
       (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
       (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil  ; Queue is empty
           (throw e))))))
 
@@ -688,7 +688,7 @@
       (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
       (segment->value bpf-map value-seg)
       (catch clojure.lang.ExceptionInfo e
-        (if (= :noent (:errno-keyword (ex-data e)))
+        (if (= :enoent (:errno-keyword (ex-data e)))
           nil  ; Queue is empty
           (throw e))))))
 
