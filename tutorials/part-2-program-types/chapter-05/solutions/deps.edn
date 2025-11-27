@@ -1,0 +1,4 @@
+;; Solutions for Chapter 5 Labs - Kprobes & Kretprobes
+;; Uses clj-ebpf from Clojars
+{:paths ["."]
+ :deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.1"}}}
