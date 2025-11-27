@@ -231,6 +231,18 @@
 (def st dsl/st)
 (def lddw dsl/lddw)
 
+;; Tutorial-compatible aliases
+(def load-mem dsl/load-mem)
+(def store-mem dsl/store-mem)
+(def ld-map-fd dsl/ld-map-fd)
+(def jmp dsl/jmp)
+(def exit dsl/exit)
+(def load-ctx dsl/load-ctx)
+(def map-ref dsl/map-ref)
+(def bpf-and dsl/and)
+(def endian-be dsl/endian-be)
+(def endian-le dsl/endian-le)
+
 ;; Assembly
 (def assemble dsl/assemble)
 (def compile-program dsl/compile-program)

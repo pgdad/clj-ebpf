@@ -624,6 +624,112 @@
     (build-instruction opcode dst-reg 0 offset imm)))
 
 ;; ============================================================================
+;; Tutorial-Compatible Aliases
+;; ============================================================================
+;; These functions provide alternative signatures that match tutorial examples
+
+(defn load-mem
+  "Load from memory into register (tutorial-compatible alias for ldx).
+
+  Example:
+    (load-mem :dw :r0 :r1 4)  ; r0 = *(u64*)(r1 + 4)"
+  [size dst src offset]
+  (ldx size dst src offset))
+
+(defn store-mem
+  "Store register to memory (tutorial-compatible alias).
+  Note: Uses [size dst offset src] order for readability.
+
+  Example:
+    (store-mem :dw :r10 -8 :r6)  ; *(u64*)(r10 - 8) = r6"
+  [size dst offset src]
+  (stx size dst src offset))
+
+(defn ld-map-fd
+  "Load map file descriptor into register (tutorial-compatible).
+  Uses lddw with BPF_PSEUDO_MAP_FD source register marker.
+
+  Example:
+    (ld-map-fd :r1 map-fd)  ; r1 = map_fd (for helper calls)"
+  [dst map-fd]
+  ;; BPF_PSEUDO_MAP_FD = 1, used as src register to indicate map fd
+  (let [opcode (bit-or (get load-store-size :dw)
+                       (get load-store-mode :imm)
+                       (get instruction-class :ld))
+        dst-reg (resolve-register dst)
+        ;; Split map-fd into low and high 32 bits
+        imm-lo (unchecked-int (bit-and map-fd 0xFFFFFFFF))
+        imm-hi 0  ; Map FDs fit in 32 bits
+        ;; src=1 indicates BPF_PSEUDO_MAP_FD
+        insn1 (build-instruction opcode dst-reg 1 0 imm-lo)
+        insn2 (build-instruction 0 0 0 0 imm-hi)]
+    (byte-array (concat insn1 insn2))))
+
+(defn jmp
+  "Unconditional jump (tutorial-compatible alias for ja).
+  Note: offset is in instructions, not bytes.
+
+  Example:
+    (jmp 5)  ; Jump forward 5 instructions"
+  [offset]
+  (ja offset))
+
+(defn exit
+  "Exit program (tutorial-compatible alias for exit-insn)."
+  []
+  (exit-insn))
+
+(defn load-ctx
+  "Load from context pointer (alias for ldx with r1 as source).
+  Commonly used to read fields from BPF program context.
+
+  Example:
+    (load-ctx :dw :r2 0)  ; r2 = *(u64*)(ctx + 0)"
+  [size dst offset]
+  (ldx size dst :r1 offset))
+
+(defn map-ref
+  "Reference to a map for use in instructions.
+  Returns the map-fd for use with ld-map-fd.
+
+  Example:
+    (ld-map-fd :r1 (map-ref my-map))"
+  [map-or-fd]
+  (if (map? map-or-fd)
+    (:fd map-or-fd)
+    map-or-fd))
+
+;; 'and' function for tutorial compatibility
+;; Note: This shadows clojure.core/and but tutorials expect bpf/and to work
+(defn and
+  "Bitwise AND operation (tutorial-compatible).
+  Handles both immediate and register sources.
+
+  Example:
+    (and :r0 0xFF)     ; r0 &= 0xFF (immediate)
+    (and :r0 :r1)      ; r0 &= r1 (register)"
+  [dst src-or-imm]
+  (if (keyword? src-or-imm)
+    (and-reg dst src-or-imm)
+    (and-op dst src-or-imm)))
+
+(defn endian-be
+  "Convert to big-endian (tutorial-compatible alias for end-to-be).
+
+  Example:
+    (endian-be :h :r5)  ; Convert r5 to big-endian 16-bit"
+  [size dst]
+  (end-to-be size dst))
+
+(defn endian-le
+  "Convert to little-endian (tutorial-compatible alias for end-to-le).
+
+  Example:
+    (endian-le :w :r5)  ; Convert r5 to little-endian 32-bit"
+  [size dst]
+  (end-to-le size dst))
+
+;; ============================================================================
 ;; Wide (128-bit) Instructions
 ;; ============================================================================
 

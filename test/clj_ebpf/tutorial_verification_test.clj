@@ -220,6 +220,58 @@
       (is (bytes? prog)))))
 
 ;; ============================================
+;; Tutorial-Compatible Aliases
+;; ============================================
+
+(deftest test-tutorial-compatible-aliases
+  (testing "load-mem alias"
+    ;; load-mem is alias for ldx with same signature
+    (let [insn1 (bpf/load-mem :dw :r0 :r1 8)
+          insn2 (bpf/ldx :dw :r0 :r1 8)]
+      (is (= (vec insn1) (vec insn2)))))
+
+  (testing "store-mem alias"
+    ;; store-mem uses [size dst offset src] order (different from stx)
+    ;; store-mem :dw :r10 -8 :r6 should produce same as stx :dw :r10 :r6 -8
+    (let [insn1 (bpf/store-mem :dw :r10 -8 :r6)
+          insn2 (bpf/stx :dw :r10 :r6 -8)]
+      (is (= (vec insn1) (vec insn2)))))
+
+  (testing "ld-map-fd alias"
+    ;; ld-map-fd loads a map fd with BPF_PSEUDO_MAP_FD marker
+    (let [insn (bpf/ld-map-fd :r1 42)]
+      (is (bytes? insn))
+      (is (= 16 (count insn)))))  ; lddw is 16 bytes (2 instructions)
+
+  (testing "jmp alias"
+    ;; jmp is alias for ja
+    (let [insn1 (bpf/jmp 5)
+          insn2 (bpf/ja 5)]
+      (is (= (vec insn1) (vec insn2))))))
+
+(deftest test-tutorial-program-patterns
+  (testing "Tutorial pattern: map lookup with load-mem/store-mem"
+    ;; This pattern is used extensively in tutorials
+    (let [prog (bpf/assemble
+                 [(bpf/mov :r6 42)                    ; key value
+                  (bpf/store-mem :w :r10 -4 :r6)     ; store key on stack
+                  (bpf/load-mem :w :r2 :r10 -4)      ; load key back
+                  (bpf/mov :r0 0)
+                  (bpf/exit-insn)])]
+      (is (bytes? prog))
+      (is (= 40 (count prog)))))  ; 5 instructions * 8 bytes
+
+  (testing "Tutorial pattern: conditional with jmp"
+    (let [prog (bpf/assemble
+                 [(bpf/mov :r0 1)
+                  (bpf/jmp-imm :jeq :r0 0 2)  ; if r0 == 0, skip 2
+                  (bpf/mov :r0 42)
+                  (bpf/jmp 1)                  ; skip next instruction
+                  (bpf/mov :r0 0)
+                  (bpf/exit-insn)])]
+      (is (bytes? prog)))))
+
+;; ============================================
 ;; Constants (used throughout)
 ;; ============================================
 
