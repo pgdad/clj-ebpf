@@ -36,13 +36,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-clojure-
 
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
       - name: Build JAR
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
         run: clj -T:build jar
 
       - name: Deploy to Clojars
         env:
           CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
         run: clj -T:build deploy
 
       - name: Create GitHub Release

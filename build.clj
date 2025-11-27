@@ -18,8 +18,10 @@
   (:require [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
 
-(def lib 'io.github.esa/clj-ebpf)
-(def version (format "0.1.%s" (b/git-count-revs nil)))
+(def lib 'io.github.pgdad/clj-ebpf)
+;; Use RELEASE_VERSION env var if set, otherwise use git commit count
+(def version (or (System/getenv "RELEASE_VERSION")
+                 (format "0.1.%s" (b/git-count-revs nil))))
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar" (name lib) version))
 
@@ -43,12 +45,12 @@
                 :basis @basis
                 :src-dirs ["src"]
                 :resource-dirs ["resources"]
-                :scm {:url "https://github.com/esa/clj-ebpf"
-                      :connection "scm:git:git://github.com/esa/clj-ebpf.git"
-                      :developerConnection "scm:git:ssh://git@github.com/esa/clj-ebpf.git"
+                :scm {:url "https://github.com/pgdad/clj-ebpf"
+                      :connection "scm:git:git://github.com/pgdad/clj-ebpf.git"
+                      :developerConnection "scm:git:ssh://git@github.com/pgdad/clj-ebpf.git"
                       :tag (str "v" version)}
                 :pom-data [[:description "A Clojure DSL for eBPF programming using Java 21+ Panama FFI"]
-                           [:url "https://github.com/esa/clj-ebpf"]
+                           [:url "https://github.com/pgdad/clj-ebpf"]
                            [:licenses
                             [:license
                              [:name "Eclipse Public License 2.0"]
