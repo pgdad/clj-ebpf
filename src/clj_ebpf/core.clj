@@ -15,7 +15,8 @@
             [clj-ebpf.dsl :as dsl]
             [clj-ebpf.relocate :as relocate]
             [clj-ebpf.elf :as elf]
-            [clj-ebpf.helpers :as helpers]))
+            [clj-ebpf.helpers :as helpers]
+            [clj-ebpf.refs :as refs]))
 
 ;; Re-export main APIs
 
@@ -92,6 +93,18 @@
 (def make-event-parser events/make-event-parser)
 (def make-event-serializer events/make-event-serializer)
 (def make-event-handler events/make-event-handler)
+
+;; Deref-able References (for @ reader macro)
+;; Ring buffer refs - blocking reads with @ref
+(def ringbuf-ref refs/ringbuf-ref)
+(def ringbuf-seq refs/ringbuf-seq)
+;; Queue/Stack refs - blocking pop with @ref
+(def queue-ref refs/queue-ref)
+(def stack-ref refs/stack-ref)
+(def queue-seq refs/queue-seq)
+;; Map watchers - wait for key with @ref
+(def map-watch refs/map-watch)
+(def map-watch-changes refs/map-watch-changes)
 
 ;; Utils
 (def check-bpf-available utils/check-bpf-available)
