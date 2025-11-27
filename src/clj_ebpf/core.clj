@@ -467,7 +467,7 @@
 (defn version
   "Get clj-ebpf version"
   []
-  "0.1.0-SNAPSHOT")
+  "0.1.1")
 
 ;; Example helper for quick testing
 

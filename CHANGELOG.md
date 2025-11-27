@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet
+
+## [0.1.1] - 2025-11-27
+
+### Fixed
+- Fixed ENOENT errno handling in map operations - map-keys, map-values,
+  map-entries, and map-count now work correctly on empty maps and when
+  iterating to the end of a map. Previously checked for :noent instead
+  of the correct :enoent errno keyword.
+
+### Added
+- Added test-enoent-handling test to verify ENOENT handling in map operations
+
+## [0.1.0] - 2025-11-26
+
 ### Changed - Migrated to Panama FFI
 - **BREAKING**: Migrated from JNA to Java's Panama Foreign Function & Memory API
 - Requires Java 21+ (previously Java 11+)
@@ -21,8 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved memory safety with scoped allocations
 - More efficient native calls through method handles
 - Future-proof: Panama FFI is the official Java native interface going forward
-
-## [0.1.0-SNAPSHOT] - 2024-01-XX
 
 ### Added - Initial MVP Release
 
@@ -104,7 +117,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Future Plans
 See README.md for complete roadmap of planned features.
-
-## [Unreleased]
-
-- Nothing yet
