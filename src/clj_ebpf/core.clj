@@ -106,6 +106,16 @@
 (def map-watch refs/map-watch)
 (def map-watch-changes refs/map-watch-changes)
 
+;; Writable References (for reset!, swap!, conj!)
+;; Map entry refs - atom-like access to map entries
+(def map-entry-ref refs/map-entry-ref)
+;; Queue/Stack writers - conj! to push values
+(def queue-writer refs/queue-writer)
+(def stack-writer refs/stack-writer)
+;; Bidirectional channels - both conj! and blocking deref
+(def queue-channel refs/queue-channel)
+(def stack-channel refs/stack-channel)
+
 ;; Utils
 (def check-bpf-available utils/check-bpf-available)
 (def get-kernel-version utils/get-kernel-version)

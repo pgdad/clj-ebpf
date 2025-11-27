@@ -1,23 +1,36 @@
 (ns clj-ebpf.refs
-  "Deref-able references for BPF data structures.
+  "Idiomatic Clojure references for BPF data structures.
 
-   This namespace provides Clojure reference types that implement IDeref
-   and IBlockingDeref, allowing natural use of the @ reader macro for
-   blocking reads from BPF data structures.
+   This namespace provides Clojure reference types that implement standard
+   protocols (IDeref, IBlockingDeref, IAtom, ITransientCollection), enabling
+   natural use of @, deref, reset!, swap!, and conj! with BPF maps.
 
-   Three reference types are provided:
+   == Read-Only References ==
 
    1. RingBufRef - Blocking reads from ring buffers
-      @ref           ; blocks until event available
-      (deref ref 1000 nil)  ; 1s timeout, nil on timeout
+      @ref                    ; blocks until event available
+      (deref ref 1000 nil)    ; 1s timeout
 
-   2. QueueRef - Blocking pops from queue/stack maps
-      @ref           ; blocks until item available
-      (deref ref 500 :empty)  ; 500ms timeout
+   2. QueueRef/StackRef - Blocking pops from queue/stack maps
+      @ref                    ; blocks until item available
 
-   3. MapWatcher - Watch for a key to appear/change in a map
-      @ref           ; blocks until key has a value
-      (deref ref 2000 :missing)  ; 2s timeout"
+   3. MapWatcher - Watch for a key to appear/change
+      @ref                    ; blocks until key exists
+
+   == Writable References ==
+
+   4. MapEntryRef - Atom-like access to map entries
+      @ref                    ; read value
+      (reset! ref val)        ; write value
+      (swap! ref inc)         ; read-modify-write
+
+   5. QueueWriter/StackWriter - Push to queues/stacks
+      (conj! ref val)         ; push value
+      @ref                    ; peek (non-blocking)
+
+   6. QueueChannel/StackChannel - Bidirectional access
+      (conj! ref val)         ; push
+      @ref                    ; blocking pop"
   (:require [clj-ebpf.maps :as maps]
             [clj-ebpf.syscall :as syscall]
             [clj-ebpf.arch :as arch]
@@ -573,6 +586,427 @@
        (println \"Packets:\" @w))"
   [[binding bpf-map key & opts] & body]
   `(let [~binding (map-watch ~bpf-map ~key ~@opts)]
+     (try
+       ~@body
+       (finally
+         (.close ~binding)))))
+
+;; ============================================================================
+;; Writable References - Atom-like Semantics for BPF Maps
+;; ============================================================================
+
+(deftype MapEntryRef [^BpfMap bpf-map
+                      key
+                      ^AtomicReference cached-value
+                      validator-fn
+                      ^AtomicBoolean closed?]
+
+  clojure.lang.IDeref
+  (deref [_]
+    (when (.get closed?)
+      (throw (ex-info "MapEntryRef is closed" {:map (:name bpf-map) :key key})))
+    (let [val (maps/map-lookup bpf-map key)]
+      (.set cached-value val)
+      val))
+
+  clojure.lang.IRef
+  (setValidator [_ f]
+    (throw (UnsupportedOperationException. "Use map-entry-ref :validator option")))
+  (getValidator [_]
+    validator-fn)
+  (getWatches [_]
+    {})  ; Watches not supported for BPF maps
+  (addWatch [_ _ _]
+    (throw (UnsupportedOperationException. "Watches not supported for BPF maps")))
+  (removeWatch [_ _]
+    (throw (UnsupportedOperationException. "Watches not supported for BPF maps")))
+
+  clojure.lang.IAtom
+  (reset [this new-val]
+    (when (.get closed?)
+      (throw (ex-info "MapEntryRef is closed" {:map (:name bpf-map) :key key})))
+    (when (and validator-fn (not (validator-fn new-val)))
+      (throw (IllegalStateException. "Invalid reference state")))
+    (maps/map-update bpf-map key new-val)
+    (.set cached-value new-val)
+    new-val)
+
+  (swap [this f]
+    (when (.get closed?)
+      (throw (ex-info "MapEntryRef is closed" {:map (:name bpf-map) :key key})))
+    (loop []
+      (let [old-val (maps/map-lookup bpf-map key)
+            new-val (f old-val)]
+        (when (and validator-fn (not (validator-fn new-val)))
+          (throw (IllegalStateException. "Invalid reference state")))
+        ;; Note: This is not truly atomic at the kernel level for hash maps
+        ;; For true atomicity, use atomic operations in BPF programs
+        (maps/map-update bpf-map key new-val)
+        (.set cached-value new-val)
+        new-val)))
+
+  (swap [this f arg1]
+    (.swap this #(f % arg1)))
+
+  (swap [this f arg1 arg2]
+    (.swap this #(f % arg1 arg2)))
+
+  (swap [this f arg1 arg2 args]
+    (.swap this #(apply f % arg1 arg2 args)))
+
+  (compareAndSet [this old-val new-val]
+    (when (.get closed?)
+      (throw (ex-info "MapEntryRef is closed" {:map (:name bpf-map) :key key})))
+    (when (and validator-fn (not (validator-fn new-val)))
+      (throw (IllegalStateException. "Invalid reference state")))
+    (let [current (maps/map-lookup bpf-map key)]
+      (if (= current old-val)
+        (do
+          (maps/map-update bpf-map key new-val)
+          (.set cached-value new-val)
+          true)
+        false)))
+
+  java.io.Closeable
+  (close [_]
+    (.set closed? true)))
+
+(defn map-entry-ref
+  "Create an atom-like reference to a specific key in a BPF map.
+
+   Supports standard Clojure atom operations:
+   - @ref / (deref ref) - read current value
+   - (reset! ref val) - set new value
+   - (swap! ref f) - read-modify-write
+   - (compare-and-set! ref old new) - conditional update
+
+   Note: swap! and compare-and-set! are NOT truly atomic at the kernel level
+   for hash maps. For true atomicity with concurrent BPF programs, use
+   atomic BPF map operations within the BPF program itself.
+
+   Options:
+   - :validator - Function to validate new values (throws on invalid)
+
+   Example:
+     (let [counter (map-entry-ref stats-map :packet-count)]
+       ;; Read
+       (println \"Count:\" @counter)
+
+       ;; Write
+       (reset! counter 0)
+
+       ;; Read-modify-write
+       (swap! counter inc)
+       (swap! counter + 10)
+
+       (.close counter))"
+  [bpf-map key & {:keys [validator]}]
+  (->MapEntryRef bpf-map key (AtomicReference. nil) validator (AtomicBoolean. false)))
+
+(defmacro with-map-entry-ref
+  "Create a map entry reference with automatic cleanup.
+
+   Example:
+     (with-map-entry-ref [counter stats-map :packet-count]
+       (println \"Before:\" @counter)
+       (swap! counter inc)
+       (println \"After:\" @counter))"
+  [[binding bpf-map key & opts] & body]
+  `(let [~binding (map-entry-ref ~bpf-map ~key ~@opts)]
+     (try
+       ~@body
+       (finally
+         (.close ~binding)))))
+
+;; ============================================================================
+;; Writable Queue/Stack References
+;; ============================================================================
+
+(deftype QueueWriter [^BpfMap bpf-map
+                      ^AtomicBoolean closed?]
+
+  clojure.lang.IDeref
+  (deref [_]
+    (when (.get closed?)
+      (throw (ex-info "QueueWriter is closed" {:map (:name bpf-map)})))
+    ;; Peek at front without removing
+    (maps/queue-peek bpf-map))
+
+  clojure.lang.ITransientCollection
+  (conj [this val]
+    (when (.get closed?)
+      (throw (ex-info "QueueWriter is closed" {:map (:name bpf-map)})))
+    (maps/queue-push bpf-map val)
+    this)
+
+  (persistent [_]
+    (throw (UnsupportedOperationException. "BPF queues cannot be made persistent")))
+
+  java.io.Closeable
+  (close [_]
+    (.set closed? true)))
+
+(defn queue-writer
+  "Create a writable reference to a BPF queue map.
+
+   Supports conj! for adding items:
+   - (conj! ref val) - push value to queue (enqueue)
+   - @ref - peek at front value without removing
+
+   For blocking pop, use queue-ref instead.
+
+   Example:
+     (let [q (queue-writer my-queue)]
+       ;; Add items
+       (-> q
+           (conj! {:event :start})
+           (conj! {:event :data :value 42})
+           (conj! {:event :end}))
+
+       ;; Peek (non-blocking)
+       (println \"Front:\" @q)
+
+       (.close q))"
+  [bpf-map]
+  (->QueueWriter bpf-map (AtomicBoolean. false)))
+
+(deftype StackWriter [^BpfMap bpf-map
+                      ^AtomicBoolean closed?]
+
+  clojure.lang.IDeref
+  (deref [_]
+    (when (.get closed?)
+      (throw (ex-info "StackWriter is closed" {:map (:name bpf-map)})))
+    ;; Peek at top without removing
+    (maps/stack-peek bpf-map))
+
+  clojure.lang.ITransientCollection
+  (conj [this val]
+    (when (.get closed?)
+      (throw (ex-info "StackWriter is closed" {:map (:name bpf-map)})))
+    (maps/stack-push bpf-map val)
+    this)
+
+  (persistent [_]
+    (throw (UnsupportedOperationException. "BPF stacks cannot be made persistent")))
+
+  java.io.Closeable
+  (close [_]
+    (.set closed? true)))
+
+(defn stack-writer
+  "Create a writable reference to a BPF stack map.
+
+   Supports conj! for adding items:
+   - (conj! ref val) - push value to stack
+   - @ref - peek at top value without removing
+
+   For blocking pop, use stack-ref instead.
+
+   Example:
+     (let [s (stack-writer my-stack)]
+       ;; Push items
+       (conj! s :first)
+       (conj! s :second)
+       (conj! s :third)
+
+       ;; Peek (non-blocking)
+       (println \"Top:\" @s)  ; => :third
+
+       (.close s))"
+  [bpf-map]
+  (->StackWriter bpf-map (AtomicBoolean. false)))
+
+(defmacro with-queue-writer
+  "Create a queue writer with automatic cleanup.
+
+   Example:
+     (with-queue-writer [q my-queue]
+       (conj! q {:event :start})
+       (conj! q {:event :end}))"
+  [[binding queue-map] & body]
+  `(let [~binding (queue-writer ~queue-map)]
+     (try
+       ~@body
+       (finally
+         (.close ~binding)))))
+
+(defmacro with-stack-writer
+  "Create a stack writer with automatic cleanup.
+
+   Example:
+     (with-stack-writer [s my-stack]
+       (conj! s :a)
+       (conj! s :b))"
+  [[binding stack-map] & body]
+  `(let [~binding (stack-writer ~stack-map)]
+     (try
+       ~@body
+       (finally
+         (.close ~binding)))))
+
+;; ============================================================================
+;; Combined Read/Write References
+;; ============================================================================
+
+(deftype QueueChannel [^BpfMap bpf-map
+                       poll-interval-ms
+                       ^AtomicBoolean closed?]
+
+  clojure.lang.IDeref
+  (deref [this]
+    (.deref this Long/MAX_VALUE nil))
+
+  clojure.lang.IBlockingDeref
+  (deref [_ timeout-ms timeout-val]
+    (when (.get closed?)
+      (throw (ex-info "QueueChannel is closed" {:map (:name bpf-map)})))
+    (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+      (loop []
+        (when (.get closed?)
+          (throw (ex-info "QueueChannel closed during deref" {})))
+        (if-let [value (maps/queue-pop bpf-map)]
+          value
+          (let [remaining (- deadline (System/currentTimeMillis))]
+            (if (pos? remaining)
+              (do
+                (Thread/sleep (min poll-interval-ms remaining))
+                (recur))
+              timeout-val))))))
+
+  clojure.lang.ITransientCollection
+  (conj [this val]
+    (when (.get closed?)
+      (throw (ex-info "QueueChannel is closed" {:map (:name bpf-map)})))
+    (maps/queue-push bpf-map val)
+    this)
+
+  (persistent [_]
+    (throw (UnsupportedOperationException. "BPF queues cannot be made persistent")))
+
+  java.io.Closeable
+  (close [_]
+    (.set closed? true)))
+
+(defn queue-channel
+  "Create a bidirectional channel-like reference to a BPF queue.
+
+   Combines reading and writing:
+   - @ref / (deref ref timeout val) - blocking pop (FIFO)
+   - (conj! ref val) - push to queue
+
+   This is useful for producer-consumer patterns where userspace
+   both reads and writes to the same queue.
+
+   Options:
+   - :poll-interval-ms - How often to poll when waiting (default: 10ms)
+
+   Example:
+     (let [ch (queue-channel work-queue)]
+       ;; Producer thread
+       (future
+         (dotimes [i 100]
+           (conj! ch {:task i})))
+
+       ;; Consumer thread
+       (future
+         (loop []
+           (when-let [task (deref ch 5000 nil)]
+             (process task)
+             (recur))))
+
+       (.close ch))"
+  [bpf-map & {:keys [poll-interval-ms] :or {poll-interval-ms 10}}]
+  (->QueueChannel bpf-map poll-interval-ms (AtomicBoolean. false)))
+
+(deftype StackChannel [^BpfMap bpf-map
+                       poll-interval-ms
+                       ^AtomicBoolean closed?]
+
+  clojure.lang.IDeref
+  (deref [this]
+    (.deref this Long/MAX_VALUE nil))
+
+  clojure.lang.IBlockingDeref
+  (deref [_ timeout-ms timeout-val]
+    (when (.get closed?)
+      (throw (ex-info "StackChannel is closed" {:map (:name bpf-map)})))
+    (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+      (loop []
+        (when (.get closed?)
+          (throw (ex-info "StackChannel closed during deref" {})))
+        (if-let [value (maps/stack-pop bpf-map)]
+          value
+          (let [remaining (- deadline (System/currentTimeMillis))]
+            (if (pos? remaining)
+              (do
+                (Thread/sleep (min poll-interval-ms remaining))
+                (recur))
+              timeout-val))))))
+
+  clojure.lang.ITransientCollection
+  (conj [this val]
+    (when (.get closed?)
+      (throw (ex-info "StackChannel is closed" {:map (:name bpf-map)})))
+    (maps/stack-push bpf-map val)
+    this)
+
+  (persistent [_]
+    (throw (UnsupportedOperationException. "BPF stacks cannot be made persistent")))
+
+  java.io.Closeable
+  (close [_]
+    (.set closed? true)))
+
+(defn stack-channel
+  "Create a bidirectional channel-like reference to a BPF stack.
+
+   Combines reading and writing:
+   - @ref / (deref ref timeout val) - blocking pop (LIFO)
+   - (conj! ref val) - push to stack
+
+   Options:
+   - :poll-interval-ms - How often to poll when waiting (default: 10ms)
+
+   Example:
+     (let [ch (stack-channel undo-stack)]
+       ;; Push operations
+       (conj! ch {:action :insert :pos 0 :text \"Hello\"})
+       (conj! ch {:action :insert :pos 5 :text \" World\"})
+
+       ;; Pop to undo (LIFO)
+       (let [last-op @ch]
+         (undo last-op))
+
+       (.close ch))"
+  [bpf-map & {:keys [poll-interval-ms] :or {poll-interval-ms 10}}]
+  (->StackChannel bpf-map poll-interval-ms (AtomicBoolean. false)))
+
+(defmacro with-queue-channel
+  "Create a queue channel with automatic cleanup.
+
+   Example:
+     (with-queue-channel [ch work-queue]
+       (conj! ch {:task :process})
+       (let [result @ch]
+         (handle result)))"
+  [[binding queue-map & opts] & body]
+  `(let [~binding (queue-channel ~queue-map ~@opts)]
+     (try
+       ~@body
+       (finally
+         (.close ~binding)))))
+
+(defmacro with-stack-channel
+  "Create a stack channel with automatic cleanup.
+
+   Example:
+     (with-stack-channel [ch undo-stack]
+       (conj! ch {:op :insert})
+       (when-let [op (deref ch 1000 nil)]
+         (undo op)))"
+  [[binding stack-map & opts] & body]
+  `(let [~binding (stack-channel ~stack-map ~@opts)]
      (try
        ~@body
        (finally
