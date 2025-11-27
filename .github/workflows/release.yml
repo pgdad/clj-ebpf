@@ -60,3 +60,5 @@ jobs:
         with:
           files: target/*.jar
           generate_release_notes: true
+          fail_on_unmatched_files: false
+        continue-on-error: true  # Don't fail if release already exists
