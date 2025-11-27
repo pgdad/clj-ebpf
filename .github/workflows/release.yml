@@ -43,14 +43,14 @@ jobs:
       - name: Build JAR
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
-        run: clj -T:build jar
+        run: clojure -T:build jar
 
       - name: Deploy to Clojars
         env:
           CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
           RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
-        run: clj -T:build deploy
+        run: clojure -T:build deploy
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

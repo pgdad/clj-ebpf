@@ -40,10 +40,10 @@ jobs:
             ${{ runner.os }}-clojure-
 
       - name: Run tests
-        run: clj -X:test
+        run: clojure -X:test
 
       - name: Build JAR
-        run: clj -T:build jar
+        run: clojure -T:build jar
 
   lint:
     runs-on: ubuntu-latest
