@@ -68,40 +68,18 @@
 ;;; Part 4: Map Operations
 ;;; ============================================================================
 
-;; Track PIDs we've seen (workaround for map iteration bug in clj-ebpf 0.1.0)
-(def ^:private tracked-pids (atom #{}))
-
 (defn increment-process-count
   "Increment the execution count for a process"
   [process-map pid]
-  (swap! tracked-pids conj pid)  ; Track this PID
-  (let [current (try
-                  (bpf/map-lookup process-map pid)
-                  (catch clojure.lang.ExceptionInfo e
-                    (if (= :enoent (:errno-keyword (ex-data e)))
-                      nil  ; Key doesn't exist yet
-                      (throw e))))
+  (let [current (bpf/map-lookup process-map pid)
         new-count (if current (inc current) 1)]
     (bpf/map-update process-map pid new-count)))
 
-(defn safe-map-lookup
-  "Map lookup that returns nil for missing keys instead of throwing"
-  [process-map pid]
-  (try
-    (bpf/map-lookup process-map pid)
-    (catch clojure.lang.ExceptionInfo e
-      (if (= :enoent (:errno-keyword (ex-data e)))
-        nil
-        (throw e)))))
-
 (defn read-process-counts
-  "Read all process counts from map using tracked PIDs.
-   Note: Uses tracked-pids atom since map iteration has a bug in clj-ebpf 0.1.0"
+  "Read all process counts from map using native map iteration"
   [process-map]
   (into {}
-        (for [pid @tracked-pids
-              :let [cnt (safe-map-lookup process-map pid)]
-              :when cnt]
+        (for [[pid cnt] (bpf/map-entries process-map)]
           [pid {:name (get-process-name pid)
                 :count cnt}])))
 
@@ -157,9 +135,6 @@
   (println "Step 1: Initializing clj-ebpf...")
   (bpf/init!)
 
-  ;; Reset tracked PIDs for fresh run
-  (reset! tracked-pids #{})
-
   ;; Step 2: Create map
   (println "\nStep 2: Creating process counter map...")
   (let [process-map (create-process-map)]
@@ -202,8 +177,7 @@
           (println "\nStep 8: Testing deletion...")
           (let [test-pid 1002]
             (bpf/map-delete process-map test-pid)
-            (swap! tracked-pids disj test-pid)  ; Remove from tracking
-            (let [value (safe-map-lookup process-map test-pid)]
+            (let [value (bpf/map-lookup process-map test-pid)]
               (if value
                 (println "  Deletion failed")
                 (println (format "  PID %d deleted successfully" test-pid)))))

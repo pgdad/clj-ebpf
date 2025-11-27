@@ -120,24 +120,11 @@
 ;;; Part 5: Data Reading
 ;;; ============================================================================
 
-;; Track stack IDs we've stored (workaround for map iteration bug in clj-ebpf 0.1.0)
-(def ^:private tracked-stack-ids (atom #{}))
-
-(defn safe-map-lookup
-  "Map lookup that returns nil for missing keys instead of throwing"
-  [bpf-map key]
-  (try
-    (bpf/map-lookup bpf-map key)
-    (catch clojure.lang.ExceptionInfo e
-      (if (= :enoent (:errno-keyword (ex-data e)))
-        nil
-        (throw e)))))
-
 (defn read-stack-trace
   "Read stack trace IPs for given stack ID from raw bytes."
   [stack-map stack-id]
   (let [key-bytes (utils/int->bytes stack-id)
-        value (safe-map-lookup stack-map key-bytes)]
+        value (bpf/map-lookup stack-map key-bytes)]
     (when value
       (let [bb (if (instance? (Class/forName "[B") value)
                  (ByteBuffer/wrap value)
@@ -150,14 +137,9 @@
                 ip))))))
 
 (defn read-stack-counts
-  "Read all stack IDs and their counts from the counts map.
-   Uses tracked-stack-ids due to map iteration bug in clj-ebpf 0.1.0"
+  "Read all stack IDs and their counts from the counts map using native map iteration"
   [counts-map]
-  (into {}
-        (for [stack-id @tracked-stack-ids
-              :let [cnt (safe-map-lookup counts-map stack-id)]
-              :when cnt]
-          [stack-id cnt])))
+  (into {} (bpf/map-entries counts-map)))
 
 ;;; ============================================================================
 ;;; Part 6: Visualization
@@ -239,7 +221,6 @@
 
     ;; Simulate samples with different frequencies
     (doseq [[stack-id stack] (map-indexed vector test-stacks)]
-      (swap! tracked-stack-ids conj stack-id)  ; Track this stack ID
       (let [sample-count (* (inc stack-id) 10)]  ; 10, 20, 30, 40 samples
 
         ;; Store stack trace
@@ -266,9 +247,6 @@
   ;; Step 1: Initialize
   (println "Step 1: Initializing clj-ebpf...")
   (bpf/init!)
-
-  ;; Reset tracked stack IDs
-  (reset! tracked-stack-ids #{})
 
   ;; Step 2: Load kernel symbols
   (println "\nStep 2: Loading kernel symbols...")
@@ -362,9 +340,6 @@
 (defn run-challenge []
   (println "\n=== Lab 2.3 Challenge: Flame Graph Generation ===\n")
 
-  ;; Reset tracked stack IDs
-  (reset! tracked-stack-ids #{})
-
   ;; Create maps
   (let [stack-map (create-stack-trace-map)
         counts-map (create-counts-map)
@@ -383,7 +358,6 @@
 
       ;; Create 10 different call paths
       (doseq [stack-id (range 10)]
-        (swap! tracked-stack-ids conj stack-id)  ; Track this stack ID
         (let [depth (+ 2 (rand-int 6))  ; 2-7 deep
               start (rand-int 20)
               stack (take depth (drop start sample-addrs))
