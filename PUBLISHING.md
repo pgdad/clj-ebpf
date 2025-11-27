@@ -100,10 +100,10 @@ After publishing, users can add the dependency:
 
 ```clojure
 ;; deps.edn
-{:deps {io.github.pgdad/clj-ebpf {:mvn/version "0.1.0"}}}
+{:deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.0"}}}
 
 ;; Leiningen
-[io.github.pgdad/clj-ebpf "0.1.0"]
+[org.clojars.pgdad/clj-ebpf "0.1.0"]
 ```
 
 ## Troubleshooting

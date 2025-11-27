@@ -18,7 +18,7 @@
   (:require [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
 
-(def lib 'io.github.pgdad/clj-ebpf)
+(def lib 'org.clojars.pgdad/clj-ebpf)
 ;; Use RELEASE_VERSION env var if set, otherwise use git commit count
 (def version (or (System/getenv "RELEASE_VERSION")
                  (format "0.1.%s" (b/git-count-revs nil))))
