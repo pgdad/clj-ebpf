@@ -7,7 +7,17 @@
  ;; Note: No external dependencies! Uses Java 21+ Panama FFI
 
  :aliases
- {:dev {:extra-paths ["dev" "test" "examples" "bench"]
+ {;; Build and deployment
+  ;; Usage:
+  ;;   clj -T:build clean    - Clean target directory
+  ;;   clj -T:build jar      - Build JAR file
+  ;;   clj -T:build install  - Install to local Maven repository
+  ;;   clj -T:build deploy   - Deploy to Clojars
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}
+                 slipset/deps-deploy {:mvn/version "0.2.2"}}
+          :ns-default build}
+
+  :dev {:extra-paths ["dev" "test" "examples" "bench"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
                      criterium/criterium {:mvn/version "0.4.6"}}}
 
