@@ -86,9 +86,9 @@
    Arguments:
    - size: :b, :h, :w, :dw
    - dst: Destination register (base address)
-   - offset: Memory offset
-   - src: Source register"
-  [size dst offset src]
+   - src: Source register
+   - offset: Memory offset"
+  [size dst src offset]
   (let [opcode (bit-or insn/BPF_STX (get size-map size) insn/BPF_MEM)]
     (insn/make-instruction opcode dst src offset 0)))
 
@@ -96,29 +96,29 @@
   "Store byte to memory from register.
 
    *(u8*)(dst + offset) = src"
-  [dst offset src]
-  (stx :b dst offset src))
+  [dst src offset]
+  (stx :b dst src offset))
 
 (defn stxh
   "Store half-word to memory from register.
 
    *(u16*)(dst + offset) = src"
-  [dst offset src]
-  (stx :h dst offset src))
+  [dst src offset]
+  (stx :h dst src offset))
 
 (defn stxw
   "Store word to memory from register.
 
    *(u32*)(dst + offset) = src"
-  [dst offset src]
-  (stx :w dst offset src))
+  [dst src offset]
+  (stx :w dst src offset))
 
 (defn stxdw
   "Store double-word to memory from register.
 
    *(u64*)(dst + offset) = src"
-  [dst offset src]
-  (stx :dw dst offset src))
+  [dst src offset]
+  (stx :dw dst src offset))
 
 ;; ============================================================================
 ;; Store Operations (from immediate)

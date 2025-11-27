@@ -62,7 +62,7 @@
 
 (deftest test-errno-values
   (testing "Common errno values"
-    (is (= 1 (:perm const/errno)))
-    (is (= 2 (:noent const/errno)))
-    (is (= 13 (:acces const/errno)))
-    (is (= 22 (:inval const/errno)))))
+    (is (= 1 (:eperm const/errno)))
+    (is (= 2 (:enoent const/errno)))
+    (is (= 13 (:eacces const/errno)))
+    (is (= 22 (:einval const/errno)))))
