@@ -933,9 +933,94 @@ A complete guide to mastering eBPF programming in Clojure, from fundamentals to 
 
 ---
 
-# Part IV: Real-World Applications (Chapters 15-22)
+## Chapter 15: Idiomatic Clojure References for BPF
+**Duration**: 2-3 hours | **Difficulty**: Intermediate
 
-## Chapter 15: Complete Application - System Call Tracer (like strace)
+### 15.1 Why Clojure References for BPF?
+- Leveraging Clojure's reference type abstractions
+- IDeref, IBlockingDeref, IAtom, and ITransientCollection protocols
+- Benefits: familiar patterns, composability, resource management
+
+### 15.2 Read-Only References
+- `ringbuf-ref`: Blocking reads from ring buffers with `@`
+- `queue-ref`, `stack-ref`: Blocking pops from queue/stack maps
+- `map-watch`: Block until key exists
+- `map-watch-changes`: Block until value changes
+- Lazy event sequences with `ringbuf-seq` and `queue-seq`
+- Timeout handling with `deref`
+
+### 15.3 Writable References
+- `map-entry-ref`: Atom-like access with `reset!`, `swap!`, `compare-and-set!`
+- `queue-writer`, `stack-writer`: Push with `conj!`, peek with `@`
+- Validators for map-entry-ref
+
+### 15.4 Bidirectional Channels
+- `queue-channel`: Combined read/write (FIFO)
+- `stack-channel`: Combined read/write (LIFO)
+- Producer-consumer patterns
+
+### 15.5 Resource Management
+- `with-ringbuf-ref` and other with-* macros
+- Closeable protocol and cleanup
+- Best practices for reference lifecycle
+
+### Lab 15.1: Event Counter Dashboard
+**Pattern**: Real-time dashboard with map-entry-ref and map-watch-changes
+**Userspace**: Counter display, threshold alerts, rate calculation
+```clojure
+;; Create atom-like references to counters
+(def counter (bpf/map-entry-ref stats-map :event-count))
+
+;; Atom operations on BPF maps
+@counter              ; read
+(reset! counter 0)    ; write
+(swap! counter inc)   ; read-modify-write
+```
+
+### Lab 15.2: Producer-Consumer Pipeline
+**Pattern**: Multi-stage event processing with queue channels
+**Architecture**: Ring buffer → Filter → Enrich → Aggregate
+```clojure
+;; Bidirectional queue channel
+(def ch (bpf/queue-channel work-queue))
+
+;; Producer pushes
+(conj! ch {:task :process :data data})
+
+;; Consumer blocks until data available
+(let [task @ch]
+  (process task))
+```
+
+### Lab 15.3: Undo/Redo System
+**Pattern**: Two-stack undo/redo with stack channels
+**Features**: LIFO semantics, operation reversal, peek without pop
+```clojure
+;; Stack channels for undo/redo
+(def undo-ch (bpf/stack-channel undo-stack))
+(def redo-ch (bpf/stack-channel redo-stack))
+
+;; Push operation to undo stack
+(conj! undo-ch (serialize op))
+
+;; Pop for undo (LIFO)
+(let [op @undo-ch]
+  (apply-reverse op)
+  (conj! redo-ch op))
+```
+
+**Key Takeaways**:
+- clj-ebpf reference types use standard Clojure protocols
+- Blocking reads with `@` provide natural event handling
+- Atom-like maps enable familiar patterns like `swap!`
+- Resource management is critical - always close references
+- Use timeouts in production to avoid indefinite blocking
+
+---
+
+# Part IV: Real-World Applications (Chapters 16-23)
+
+## Chapter 16: Complete Application - System Call Tracer (like strace)
 **Duration**: 4-5 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1062,7 +1147,7 @@ close(3) = 0
 
 ---
 
-## Chapter 16: Complete Application - Network Traffic Analyzer
+## Chapter 17: Complete Application - Network Traffic Analyzer
 **Duration**: 5-6 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1104,7 +1189,7 @@ Dashboard available at http://localhost:8080
 
 ---
 
-## Chapter 17: Complete Application - Container Security Monitor
+## Chapter 18: Complete Application - Container Security Monitor
 **Duration**: 5-6 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1147,7 +1232,7 @@ Security monitoring for containerized applications using LSM hooks and cgroup at
 
 ---
 
-## Chapter 18: Complete Application - Performance Profiler
+## Chapter 19: Complete Application - Performance Profiler
 **Duration**: 4-5 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1182,7 +1267,7 @@ A comprehensive performance profiling tool for system-wide or per-process analys
 
 ---
 
-## Chapter 19: Complete Application - Distributed Tracing
+## Chapter 20: Complete Application - Distributed Tracing
 **Duration**: 5-6 hours | **Difficulty**: Expert
 
 ### Application Overview
@@ -1232,7 +1317,7 @@ Service A          Service B          Service C
 
 ---
 
-## Chapter 20: Complete Application - Database Query Analyzer
+## Chapter 21: Complete Application - Database Query Analyzer
 **Duration**: 4-5 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1263,7 +1348,7 @@ Analyze database queries without modifying the database or application.
 
 ---
 
-## Chapter 21: Complete Application - Security Audit System
+## Chapter 22: Complete Application - Security Audit System
 **Duration**: 5-6 hours | **Difficulty**: Expert
 
 ### Application Overview
@@ -1286,7 +1371,7 @@ Comprehensive security auditing and compliance monitoring system.
 
 ---
 
-## Chapter 22: Complete Application - Chaos Engineering Platform
+## Chapter 23: Complete Application - Chaos Engineering Platform
 **Duration**: 4-5 hours | **Difficulty**: Advanced
 
 ### Application Overview
@@ -1319,36 +1404,36 @@ A chaos engineering platform for testing system resilience using eBPF.
 
 ---
 
-# Part V: Production and Best Practices (Chapters 23-25)
+# Part V: Production and Best Practices (Chapters 24-26)
 
-## Chapter 23: Production Deployment
+## Chapter 24: Production Deployment
 **Duration**: 3-4 hours | **Difficulty**: Advanced
 
-### 23.1 Deployment Strategies
+### 24.1 Deployment Strategies
 - Canary deployments for BPF programs
 - Rollback procedures
 - Version management
 - Configuration management
 
-### 23.2 Monitoring and Observability
+### 24.2 Monitoring and Observability
 - Monitoring BPF program health
 - Tracking program statistics
 - Alert on program failures
 - Logging best practices
 
-### 23.3 Resource Management
+### 24.3 Resource Management
 - Memory limits for maps
 - CPU overhead monitoring
 - Program count limits
 - Cleanup and garbage collection
 
-### 23.4 Security Considerations
+### 24.4 Security Considerations
 - Capability requirements
 - Program signing and verification
 - Sensitive data handling
 - Audit logging
 
-### Lab 23.1: BPF Program Lifecycle Manager
+### Lab 24.1: BPF Program Lifecycle Manager
 **System**: Automated BPF program deployment
 **Features**: Load, attach, monitor, rollback
 ```clojure
@@ -1364,22 +1449,22 @@ A chaos engineering platform for testing system resilience using eBPF.
 
 ---
 
-## Chapter 24: Troubleshooting Guide
+## Chapter 25: Troubleshooting Guide
 **Duration**: 2-3 hours | **Difficulty**: Intermediate
 
-### 24.1 Common Issues
+### 25.1 Common Issues
 - Verifier rejection patterns
 - Map size issues
 - Performance problems
 - Helper function errors
 
-### 24.2 Diagnostic Tools
+### 25.2 Diagnostic Tools
 - bpftool for inspection
 - /sys/kernel/debug/tracing/trace_pipe
 - Kernel logs
 - clj-ebpf debugging functions
 
-### 24.3 Performance Debugging
+### 25.3 Performance Debugging
 - Identifying overhead sources
 - Optimization strategies
 - Profiling BPF programs
@@ -1397,36 +1482,36 @@ A chaos engineering platform for testing system resilience using eBPF.
 
 ---
 
-## Chapter 25: Advanced Patterns and Best Practices
+## Chapter 26: Advanced Patterns and Best Practices
 **Duration**: 3-4 hours | **Difficulty**: Expert
 
-### 25.1 Design Patterns
+### 26.1 Design Patterns
 - Event aggregation pattern
 - Sampling pattern
 - Filtering pattern
 - Time-series pattern
 - State machine pattern
 
-### 25.2 Code Organization
+### 26.2 Code Organization
 - Modular BPF programs
 - Shared map patterns
 - Program composition
 - Configuration management
 
-### 25.3 Performance Best Practices
+### 26.3 Performance Best Practices
 - Minimize map lookups
 - Use appropriate map types
 - Batch operations
 - Per-CPU data structures
 - Avoid expensive helpers
 
-### 25.4 Security Best Practices
+### 26.4 Security Best Practices
 - Least privilege principle
 - Input validation
 - Sensitive data protection
 - Audit logging
 
-### 25.5 Testing Best Practices
+### 26.5 Testing Best Practices
 - Unit test coverage
 - Integration testing
 - Load testing
@@ -1492,11 +1577,11 @@ Quick reference for common errors and solutions.
 
 # Tutorial Statistics
 
-**Total Chapters**: 25
-**Total Labs**: 75+
+**Total Chapters**: 26
+**Total Labs**: 78+
 **Complete Applications**: 8
-**Estimated Duration**: 80-100 hours
-**Difficulty Levels**: Beginner (4), Intermediate (11), Advanced (8), Expert (2)
+**Estimated Duration**: 82-102 hours
+**Difficulty Levels**: Beginner (4), Intermediate (12), Advanced (8), Expert (2)
 
 **Code Examples**: 150+
 **Real-World Applications**: 8 complete applications
