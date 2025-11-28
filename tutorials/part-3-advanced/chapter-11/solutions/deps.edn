@@ -1,0 +1,4 @@
+;; Solutions for Chapter 11 Labs - Cgroups and Resource Control
+;; Uses clj-ebpf from Clojars
+{:paths ["."]
+ :deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.1"}}}
