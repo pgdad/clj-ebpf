@@ -1,0 +1,4 @@
+;; Solutions for Chapter 8 Labs - TC (Traffic Control) BPF
+;; Uses clj-ebpf from Clojars
+{:paths ["."]
+ :deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.1"}}}
