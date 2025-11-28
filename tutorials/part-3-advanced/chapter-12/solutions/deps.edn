@@ -1,0 +1,4 @@
+;; Solutions for Chapter 12 Labs - Perf Buffer and Ring Buffer
+;; Uses clj-ebpf from Clojars
+{:paths ["."]
+ :deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.1"}}}
