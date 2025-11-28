@@ -1,0 +1,5 @@
+;; Solutions for Chapter 10 Labs - CO-RE and BTF
+;; Uses clj-ebpf from Clojars
+{:paths ["."]
+ :deps {org.clojars.pgdad/clj-ebpf {:mvn/version "0.1.1"}
+        org.clojure/tools.cli {:mvn/version "1.0.219"}}}
