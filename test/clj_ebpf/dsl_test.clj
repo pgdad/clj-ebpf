@@ -1,5 +1,6 @@
 (ns clj-ebpf.dsl-test
-  "Tests for BPF DSL"
+  "Tests for BPF DSL - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.dsl :as dsl]))
 

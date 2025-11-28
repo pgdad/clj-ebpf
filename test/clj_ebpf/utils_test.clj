@@ -1,4 +1,6 @@
 (ns clj-ebpf.utils-test
+  "Tests for utility functions - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.utils :as utils])
   (:import [java.lang.foreign MemorySegment]))

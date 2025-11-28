@@ -31,6 +31,22 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
+  ;; CI-safe tests that don't require BPF privileges
+  ;; These tests can run without root/BPF syscall permissions
+  :test-ci {:extra-paths ["test"]
+            :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                         io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+            :main-opts ["-m" "cognitect.test-runner"]
+            :exec-fn cognitect.test-runner.api/test
+            :exec-args {:nses [clj-ebpf.utils-test
+                               clj-ebpf.dsl-test
+                               clj-ebpf.constants-test
+                               clj-ebpf.dsl-examples-test
+                               clj-ebpf.elf-test
+                               clj-ebpf.btf-test
+                               clj-ebpf.refs-test
+                               clj-ebpf.tutorial-verification-test]}}
+
   :examples {:extra-paths ["examples"]}
 
   :repl {:extra-deps {nrepl/nrepl {:mvn/version "1.1.1"}

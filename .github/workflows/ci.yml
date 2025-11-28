@@ -39,8 +39,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-clojure-
 
-      - name: Run tests
-        run: clojure -X:test
+      - name: Run CI-safe tests
+        run: clojure -X:test-ci
 
       - name: Build JAR
         run: clojure -T:build jar

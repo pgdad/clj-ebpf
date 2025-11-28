@@ -1,4 +1,6 @@
 (ns clj-ebpf.constants-test
+  "Tests for BPF constants - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.constants :as const]))
 

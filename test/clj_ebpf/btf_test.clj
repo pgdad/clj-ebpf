@@ -1,5 +1,6 @@
 (ns clj-ebpf.btf-test
-  "Tests for BTF (BPF Type Format) support"
+  "Tests for BTF (BPF Type Format) support - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.btf :as btf]
             [clj-ebpf.utils :as utils]))

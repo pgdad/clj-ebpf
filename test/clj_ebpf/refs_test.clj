@@ -1,5 +1,6 @@
 (ns clj-ebpf.refs-test
-  "Tests for deref-able BPF references"
+  "Tests for deref-able BPF references - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.refs :as refs])
   (:import [clj_ebpf.refs RingBufRef QueueRef MapWatcher MapChangeWatcher

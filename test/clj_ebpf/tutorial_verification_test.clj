@@ -1,5 +1,7 @@
 (ns clj-ebpf.tutorial-verification-test
-  "Tests that verify tutorial code examples work correctly"
+  "Tests that verify tutorial code examples work correctly.
+   CI-safe (no BPF privileges required - assembly only)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.core :as bpf]
             [clj-ebpf.arch :as arch]

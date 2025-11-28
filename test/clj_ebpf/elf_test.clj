@@ -1,5 +1,6 @@
 (ns clj-ebpf.elf-test
-  "Tests for ELF parser"
+  "Tests for ELF parser - CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer :all]
             [clj-ebpf.elf :as elf]
             [clj-ebpf.utils :as utils]))

@@ -1,5 +1,7 @@
 (ns clj-ebpf.dsl-examples-test
-  "Tests for DSL examples to ensure they compile correctly."
+  "Tests for DSL examples to ensure they compile correctly.
+   CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer [deftest testing is]]
             [clj-ebpf.examples :as examples]))
 
