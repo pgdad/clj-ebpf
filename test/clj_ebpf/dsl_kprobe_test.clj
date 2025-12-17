@@ -4,7 +4,9 @@
    - pt_regs argument reading
    - ring buffer DSL
    - event struct definitions
-   - kprobe program builders"
+   - kprobe program builders
+   CI-safe (no BPF privileges required)"
+  {:ci-safe true}
   (:require [clojure.test :refer [deftest testing is are]]
             [clj-ebpf.arch :as arch]
             [clj-ebpf.dsl :as dsl]

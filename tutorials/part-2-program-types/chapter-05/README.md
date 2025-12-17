@@ -450,9 +450,148 @@ sudo bpftool prog show id <ID>
 sudo bpftool prog dump xlated id <ID>
 ```
 
+## 5.9 High-Level Kprobe DSL
+
+clj-ebpf provides a high-level DSL for building kprobe programs that abstracts
+away architecture-specific details like pt_regs offsets.
+
+### The Kprobe DSL Module
+
+```clojure
+(require '[clj-ebpf.dsl.kprobe :as kprobe])
+```
+
+### Automatic Argument Extraction
+
+Instead of manually calculating pt_regs offsets, use `kprobe-prologue`:
+
+```clojure
+;; Read first two function arguments into r6 and r7
+(kprobe/kprobe-prologue [:r6 :r7])
+;; Generates architecture-appropriate ldx instructions
+
+;; With context pointer saved for later use
+(kprobe/kprobe-prologue :r9 [:r6 :r7])
+;; r9 = pt_regs pointer, r6 = arg0, r7 = arg1
+```
+
+This works on all supported architectures (x86_64, ARM64, s390x, PPC64LE, RISC-V).
+
+### Building Complete Kprobe Programs
+
+Use `build-kprobe-program` for a complete program structure:
+
+```clojure
+(kprobe/build-kprobe-program
+  {:args [:r6 :r7]        ;; Function arguments to read
+   :ctx-reg :r9           ;; Optional: save pt_regs pointer
+   :body [...]            ;; Your program logic
+   :return-value 0})      ;; Return value (default 0)
+```
+
+### Defining Kprobe Handlers with Macros
+
+The `defkprobe-instructions` macro provides a clean way to define handlers:
+
+```clojure
+(kprobe/defkprobe-instructions tcp-connect-probe
+  {:function "tcp_v4_connect"
+   :args [:r6]}  ;; sk pointer in r6
+  (concat
+    (dsl/helper-get-current-pid-tgid)
+    [(dsl/mov-reg :r7 :r0)]  ;; Save pid_tgid
+    ;; ... your logic ...
+    [(dsl/mov :r0 0)
+     (dsl/exit-insn)]))
+
+;; Use it:
+(def program-bytes (dsl/assemble (tcp-connect-probe)))
+```
+
+### Kretprobe Return Values
+
+For kretprobes, use `kretprobe-get-return-value`:
+
+```clojure
+;; Read function return value into r6
+(kprobe/kretprobe-get-return-value :r1 :r6)
+;; r1 = pt_regs, r6 = return value
+
+;; Or use the macro:
+(kprobe/defkretprobe-instructions tcp-connect-ret
+  {:function "tcp_v4_connect"
+   :ret-reg :r6}  ;; Return value in r6
+  (concat
+    ;; Check if error (return value < 0)
+    [(dsl/jsge-imm :r6 0 :success)]
+    ;; Handle error case...
+    [(dsl/mov :r0 0)
+     (dsl/exit-insn)]))
+```
+
+### Multi-Architecture Support
+
+The DSL automatically handles architecture differences:
+
+```clojure
+(require '[clj-ebpf.arch :as arch])
+
+;; Check current architecture
+arch/current-arch  ;; => :x86_64
+
+;; Get offset for argument N (handled automatically by prologue)
+(arch/get-kprobe-arg-offset 0)  ;; => 112 on x86_64, 0 on ARM64
+```
+
+### Complete Example: Pure Clojure Kprobe
+
+```clojure
+(ns my-tracer
+  (:require [clj-ebpf.dsl :as dsl]
+            [clj-ebpf.dsl.kprobe :as kprobe]
+            [clj-ebpf.dsl.structs :as structs]))
+
+;; Define event structure
+(structs/defevent ExecEvent
+  [:timestamp :u64]
+  [:pid :u32]
+  [:uid :u32])
+
+;; Build kprobe program
+(defn build-execve-tracer [ringbuf-fd]
+  (dsl/assemble
+    (vec (concat
+      ;; Read filename arg into r7
+      (kprobe/kprobe-prologue [:r7])
+
+      ;; Get timestamp
+      (dsl/helper-ktime-get-ns)
+      [(dsl/mov-reg :r8 :r0)]
+
+      ;; Reserve ring buffer space
+      (dsl/ringbuf-reserve :r6 ringbuf-fd (structs/event-size ExecEvent))
+      [(dsl/jmp-imm :jeq :r6 0 :exit)]
+
+      ;; Store event data
+      [(structs/store-event-field :r6 ExecEvent :timestamp :r8)]
+
+      ;; Get and store PID
+      (dsl/helper-get-current-pid-tgid)
+      [(dsl/and-imm :r0 0xffffffff)
+       (structs/store-event-field :r6 ExecEvent :pid :r0)]
+
+      ;; Submit event
+      (dsl/ringbuf-submit :r6)
+
+      ;; Exit
+      [[:label :exit]
+       (dsl/mov :r0 0)
+       (dsl/exit-insn)]))))
+```
+
 ## Labs
 
-This chapter includes three hands-on labs:
+This chapter includes four hands-on labs:
 
 ### Lab 5.1: Function Call Tracer
 Basic kprobe attachment and argument reading
@@ -462,6 +601,9 @@ Use kprobe + kretprobe for function latency measurement
 
 ### Lab 5.3: System Call Monitor
 Comprehensive syscall monitoring with arguments and return values
+
+### Lab 5.4: Pure Clojure Kprobe
+Build a complete kprobe using the high-level DSL without external compilers
 
 ## Navigation
 
