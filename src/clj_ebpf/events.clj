@@ -73,23 +73,29 @@
   (let [fd (:fd ringbuf-map)
         max-entries (:max-entries ringbuf-map)
 
-        ;; Ring buffer layout:
-        ;; - Page 0: consumer_pos (4 bytes at offset 0)
-        ;; - Page 1: producer_pos (4 bytes at offset 4096)
-        ;; - Page 2+: data area (max-entries bytes)
-        total-size (+ (* 2 page-size) max-entries)
+        ;; Ring buffer layout (requires two separate mmaps):
+        ;; - Page 0: consumer_pos (writable by consumer)
+        ;; - Page 1: producer_pos (read-only)
+        ;; - Page 2+: data area (read-only, size = max-entries)
+        ;;
+        ;; BPF ring buffers require:
+        ;; 1. Consumer page mapped with PROT_READ | PROT_WRITE
+        ;; 2. Producer + data pages mapped with PROT_READ only
 
-        ;; Memory map the ring buffer
         ;; PROT_READ=1, PROT_WRITE=2, MAP_SHARED=1
-        addr (mmap fd total-size 3 1 0)
+
+        ;; Map consumer page (read/write) at offset 0
+        consumer-addr (mmap fd page-size 3 1 0)  ; PROT_READ | PROT_WRITE
+
+        ;; Map producer + data pages (read-only) at offset page-size
+        ;; The data area needs to be mapped twice its size for wraparound reads
+        producer-data-size (+ page-size (* 2 max-entries))
+        producer-addr (mmap fd producer-data-size 1 1 page-size)  ; PROT_READ only
 
         ;; Create MemorySegments for each region
-        arena (Arena/ofAuto)
-        base-seg (.reinterpret (MemorySegment/ofAddress addr) total-size)
-
-        consumer-seg (.asSlice base-seg 0 page-size)
-        producer-seg (.asSlice base-seg page-size page-size)
-        data-seg (.asSlice base-seg (* 2 page-size) max-entries)]
+        consumer-seg (.reinterpret (MemorySegment/ofAddress consumer-addr) page-size)
+        producer-seg (.reinterpret (MemorySegment/ofAddress producer-addr) page-size)
+        data-seg (.reinterpret (MemorySegment/ofAddress (+ producer-addr page-size)) max-entries)]
 
     (->RingBufLayout consumer-seg producer-seg data-seg max-entries)))
 
@@ -100,8 +106,11 @@
   - layout: RingBufLayout from map-ringbuf"
   [^RingBufLayout layout]
   (let [consumer-addr (.address (:consumer-seg layout))
-        total-size (+ (* 2 page-size) (:data-size layout))]
-    (munmap consumer-addr total-size)))
+        producer-addr (.address (:producer-seg layout))
+        producer-data-size (+ page-size (* 2 (:data-size layout)))]
+    ;; Unmap both mappings
+    (munmap consumer-addr page-size)
+    (munmap producer-addr producer-data-size)))
 
 ;; ============================================================================
 ;; Ring Buffer Operations
