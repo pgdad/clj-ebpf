@@ -138,18 +138,24 @@
         producer (get-producer-pos layout)]
     (- producer consumer)))
 
+;; BPF ring buffer record header flags
+(def ^:private BPF_RINGBUF_BUSY_BIT (bit-shift-left 1 31))
+(def ^:private BPF_RINGBUF_DISCARD_BIT (bit-shift-left 1 30))
+(def ^:private BPF_RINGBUF_HDR_SZ 8)  ; Header is 8 bytes (len + pg_off)
+
 (defn- read-ring-buf-record
   "Read a single record from ring buffer
 
-  Ring buffer record format:
-  - u32 len: Length of record (including header)
-  - u8 data[len-4]: Record data
+  Ring buffer record format (kernel bpf_ringbuf_hdr):
+  - u32 len: Length of data (high bits contain BUSY/DISCARD flags)
+  - u32 pg_off: Page offset (internal use)
+  - u8 data[len]: Record data (8-byte aligned)
 
   Returns:
   - {:data byte-array :size int} or nil if no data available"
   [^RingBufLayout layout]
   (let [available (ring-buf-available layout)]
-    (when (>= available 4) ; Need at least header
+    (when (>= available BPF_RINGBUF_HDR_SZ) ; Need at least header
       (let [consumer-pos (get-consumer-pos layout)
             data-seg (:data-seg layout)
             data-size (:data-size layout)
@@ -157,21 +163,44 @@
             ;; Ring buffer wraps around
             offset (mod consumer-pos data-size)
 
-            ;; Read record length (first 4 bytes)
+            ;; Read record length (first 4 bytes of header)
             len-bytes (byte-array 4)
             _ (doseq [i (range 4)]
                 (aset len-bytes i
                   (.get data-seg ValueLayout/JAVA_BYTE (mod (+ offset i) data-size))))
 
-            record-len (utils/bytes->int len-bytes)
-            data-len (- record-len 4)]
+            raw-len (utils/bytes->int len-bytes)
 
-        (when (and (pos? record-len) (<= record-len available))
-          ;; Read record data
+            ;; Check if record is busy (still being written)
+            busy? (not= 0 (bit-and raw-len BPF_RINGBUF_BUSY_BIT))
+            ;; Check if record should be discarded
+            discard? (not= 0 (bit-and raw-len BPF_RINGBUF_DISCARD_BIT))
+            ;; Extract actual data length (mask off flag bits)
+            data-len (bit-and raw-len (dec BPF_RINGBUF_DISCARD_BIT))
+            ;; Total record size is header + data, rounded up to 8 bytes
+            record-len (+ BPF_RINGBUF_HDR_SZ (bit-and (+ data-len 7) (bit-not 7)))]
+
+        (cond
+          ;; Record still being written, wait
+          busy? nil
+
+          ;; Invalid length
+          (or (<= data-len 0) (> record-len available)) nil
+
+          ;; Record should be discarded - skip it
+          discard?
+          (do
+            (set-consumer-pos! layout (+ consumer-pos record-len))
+            ;; Return empty to indicate we processed something but no data
+            {:data (byte-array 0) :size record-len})
+
+          ;; Normal record - read data
+          :else
           (let [data (byte-array data-len)]
             (doseq [i (range data-len)]
               (aset data i
-                (.get data-seg ValueLayout/JAVA_BYTE (mod (+ offset 4 i) data-size))))
+                (.get data-seg ValueLayout/JAVA_BYTE
+                      (mod (+ offset BPF_RINGBUF_HDR_SZ i) data-size))))
 
             ;; Update consumer position
             (set-consumer-pos! layout (+ consumer-pos record-len))
@@ -185,14 +214,18 @@
   - layout: RingBufLayout
   - max-events: Maximum number of events to read (default: all available)
 
-  Returns vector of event byte arrays"
+  Returns vector of event byte arrays (non-empty only)"
   [^RingBufLayout layout & {:keys [max-events] :or {max-events Integer/MAX_VALUE}}]
   (loop [events []
          count 0]
     (if (and (< count max-events)
              (pos? (ring-buf-available layout)))
       (if-let [record (read-ring-buf-record layout)]
-        (recur (conj events (:data record)) (inc count))
+        ;; Only add non-empty data (skips discarded records)
+        (let [data (:data record)]
+          (if (and data (pos? (alength data)))
+            (recur (conj events data) (inc count))
+            (recur events count)))  ; Skip empty/discarded, don't increment count
         events)
       events)))
 
