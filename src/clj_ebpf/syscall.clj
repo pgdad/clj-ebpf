@@ -604,40 +604,62 @@
    Returns link FD"
   [prog-fd function-name retprobe?]
   (let [attr-mem (allocate-zeroed 128)
-            ;; Allocate memory for the symbol name
+        ;; Allocate memory for the symbol name (null-terminated string)
         func-name-bytes (.getBytes (str function-name "\0") "UTF-8")
-        func-name-mem (.allocate *arena* (alength func-name-bytes) 1)]
-    (java.lang.foreign.MemorySegment/copy func-name-bytes 0 func-name-mem (java.lang.foreign.ValueLayout/JAVA_BYTE) 0 (alength func-name-bytes))
+        func-name-mem (.allocate *arena* (long (alength func-name-bytes)) 1)]
+    ;; Copy the function name to native memory
+    (java.lang.foreign.MemorySegment/copy func-name-bytes 0 func-name-mem
+                                          (java.lang.foreign.ValueLayout/JAVA_BYTE) 0
+                                          (alength func-name-bytes))
 
     ;; Build bpf_attr for BPF_LINK_CREATE with kprobe_multi
+    ;; struct bpf_attr for BPF_LINK_CREATE:
+    ;;   prog_fd (offset 0, u32)
+    ;;   target_fd (offset 4, u32)
+    ;;   attach_type (offset 8, u32)
+    ;;   flags (offset 12, u32)
+    ;;   kprobe_multi substruct (offset 16):
+    ;;     flags (offset 16, u32) - BPF_F_KPROBE_MULTI_RETURN = 1 for retprobe
+    ;;     cnt (offset 20, u32) - number of symbols
+    ;;     syms (offset 24, u64) - pointer to array of symbol name pointers
+    ;;     addrs (offset 32, u64) - pointer to array of addresses (alternative to syms)
+    ;;     cookies (offset 40, u64) - pointer to array of cookies
+
     ;; prog_fd (offset 0)
-    (.set attr-mem C_INT 0 prog-fd)
-    ;; target_fd (offset 4) - not used for kprobe_multi, set to 0
-    (.set attr-mem C_INT 4 0)
+    (.set attr-mem C_INT 0 (int prog-fd))
+    ;; target_fd (offset 4) - not used for kprobe_multi
+    (.set attr-mem C_INT 4 (int 0))
     ;; attach_type (offset 8) - BPF_TRACE_KPROBE_MULTI = 42
-    (.set attr-mem C_INT 8 (const/attach-type->num :trace-kprobe-multi))
-    ;; flags (offset 12) - main link flags, not kprobe_multi specific
-    (.set attr-mem C_INT 12 0)
+    (.set attr-mem C_INT 8 (int (const/attach-type->num :trace-kprobe-multi)))
+    ;; flags (offset 12) - main link flags
+    (.set attr-mem C_INT 12 (int 0))
 
-    ;; kprobe_multi substruct starts at offset 16
-    ;; kprobe_multi.flags (offset 16) - BPF_F_KPROBE_MULTI_RETURN = 1
-    (.set attr-mem C_INT 16 (if retprobe? 1 0))
+    ;; kprobe_multi.flags (offset 16)
+    (.set attr-mem C_INT 16 (int (if retprobe? 1 0)))
     ;; kprobe_multi.cnt (offset 20)
-    (.set attr-mem C_INT 20 1)  ; attaching to 1 symbol
-    ;; kprobe_multi.syms (offset 24) - address of array of string pointers
-    ;; We need to create an array containing one pointer to our function name
-    (let [sym-ptr-array (.allocate *arena* 8 8)]  ; array of 1 pointer
-      (.set sym-ptr-array C_POINTER 0 func-name-mem) ; array[0] = func_name_mem
-      (.set attr-mem C_LONG 24 (.address sym-ptr-array)))  ; syms = address of array
+    (.set attr-mem C_INT 20 (int 1))
 
-    ;; Debug logging
-    (log/info "BPF_LINK_CREATE debug:"
-              "\n  prog_fd:" prog-fd
-              "\n  attach_type:" (const/attach-type->num :trace-kprobe-multi)
-              "\n  function:" function-name
-              "\n  retprobe?:" retprobe?
-              "\n  func_name_mem addr:" (.address func-name-mem)
-              "\n  syms field value:" (.get attr-mem C_LONG 24))
+    ;; Create array of symbol name pointers
+    ;; syms is a pointer to an array of (const char *) pointers
+    (let [sym-ptr-array (.allocate *arena* 8 8)]  ; allocate 8 bytes (1 pointer), align to 8
+      ;; Store the address of the function name string as a long value
+      ;; This is the key fix: use C_LONG with .address(), not C_POINTER with MemorySegment
+      (.set sym-ptr-array C_LONG 0 (.address func-name-mem))
+
+      ;; kprobe_multi.syms (offset 24) - pointer to the array of symbol pointers
+      (.set attr-mem C_LONG 24 (.address sym-ptr-array))
+      ;; kprobe_multi.addrs (offset 32) - must be 0 when using syms
+      (.set attr-mem C_LONG 32 (long 0))
+      ;; kprobe_multi.cookies (offset 40) - optional, set to 0
+      (.set attr-mem C_LONG 40 (long 0)))
+
+    (log/debug "BPF_LINK_CREATE kprobe_multi:"
+               "\n  prog_fd:" prog-fd
+               "\n  attach_type:" (const/attach-type->num :trace-kprobe-multi)
+               "\n  function:" function-name
+               "\n  retprobe?:" retprobe?
+               "\n  func_name_mem addr:" (.address func-name-mem)
+               "\n  syms field value:" (.get attr-mem C_LONG 24))
 
     (let [result (int (bpf-syscall :link-create attr-mem))]
       (if (< result 0)
