@@ -1,6 +1,8 @@
 (ns clj-ebpf.dsl
   "Idiomatic Clojure DSL for BPF programming"
-  (:require [clj-ebpf.utils :as utils]))
+  (:require [clj-ebpf.arch :as arch]
+            [clj-ebpf.btf :as btf]
+            [clj-ebpf.utils :as utils]))
 
 ;; ============================================================================
 ;; BPF Instruction Encoding
@@ -1180,6 +1182,135 @@
    (mov-reg :r3 src-reg)
    (call 114)])  ; bpf_probe_read_user_str = 114
 
+(defn read-kprobe-arg
+  "Read a kprobe function argument from the pt_regs context.
+
+  In kprobe programs, r1 contains a pointer to the pt_regs structure
+  which holds the CPU registers at the time of the probe. This function
+  generates instructions to read argument N from pt_regs into a destination
+  register.
+
+  The pt_regs offsets are architecture-specific and are automatically
+  determined based on the current runtime architecture.
+
+  Parameters:
+  - ctx-reg: Register containing pt_regs pointer (typically :r1 at kprobe entry)
+  - arg-index: Argument index (0 = first argument, 1 = second, etc.)
+  - dst-reg: Destination register to store the argument value
+
+  Returns a single ldx instruction.
+
+  Example:
+    ;; At kprobe entry, r1 = pt_regs*
+    (read-kprobe-arg :r1 0 :r6)  ; r6 = first function argument (sk pointer)
+    (read-kprobe-arg :r1 1 :r7)  ; r7 = second function argument
+
+  Architecture support:
+  - x86_64:  Arguments in rdi, rsi, rdx, rcx, r8, r9
+  - arm64:   Arguments in x0-x7
+  - s390x:   Arguments in r2-r6
+  - ppc64le: Arguments in r3-r10
+  - riscv64: Arguments in a0-a7"
+  [ctx-reg arg-index dst-reg]
+  (let [offset (arch/get-kprobe-arg-offset arg-index)]
+    (ldx :dw dst-reg ctx-reg offset)))
+
+(defn core-read
+  "Generate CO-RE relocatable field read instructions.
+
+  Reads a field from a kernel structure using BTF information for
+  CO-RE (Compile Once - Run Everywhere) compatibility. The field offset
+  is determined at load time based on the target kernel's BTF.
+
+  Parameters:
+  - btf-data: BTF data from btf/load-btf-file
+  - dst-reg: Destination register for the read value
+  - src-reg: Source register containing struct pointer
+  - struct-name: Name of the kernel struct (string)
+  - field-path: Vector of field names to traverse, e.g., [:__sk_common :skc_daddr]
+
+  Returns instruction sequence for reading the field value.
+  Uses bpf_probe_read_kernel for safe kernel memory access.
+
+  Example:
+    ;; Read sk->__sk_common.skc_daddr into r6
+    (core-read btf :r6 :r7 \"sock\" [:__sk_common :skc_daddr])
+
+  Note: This generates a compile-time resolved offset. For true CO-RE
+  relocation at load time, use the relocate namespace functions."
+  [btf-data dst-reg src-reg struct-name field-path]
+  (let [type-info (btf/find-type-by-name btf-data struct-name)
+        _ (when-not type-info
+            (throw (ex-info (str "Struct not found in BTF: " struct-name)
+                           {:struct struct-name :field-path field-path})))
+        access-info (btf/field-path->access-info btf-data (:id type-info) field-path)
+        _ (when-not access-info
+            (throw (ex-info (str "Field path not found: " field-path)
+                           {:struct struct-name :field-path field-path})))
+        offset (:byte-offset access-info)
+        _ (when-not offset
+            (throw (ex-info "Field is not byte-aligned"
+                           {:struct struct-name :field-path field-path
+                            :bit-offset (:bit-offset access-info)})))
+        field-type-id (:final-type-id access-info)
+        field-size (btf/get-type-size btf-data field-type-id)
+        size-keyword (case field-size
+                       1 :b
+                       2 :h
+                       4 :w
+                       8 :dw
+                       :dw)]  ; Default to dword for pointers, etc.
+    ;; Generate load instruction with computed offset
+    (ldx size-keyword dst-reg src-reg offset)))
+
+(defn core-read-safe
+  "Generate CO-RE field read using bpf_probe_read_kernel for safety.
+
+  Like core-read but uses bpf_probe_read_kernel helper instead of
+  direct memory load. This is safer for potentially invalid pointers.
+
+  The result is stored on the stack at the given offset, then loaded
+  into the destination register.
+
+  Parameters:
+  - btf-data: BTF data from btf/load-btf-file
+  - dst-reg: Destination register for the read value
+  - src-reg: Source register containing struct pointer
+  - struct-name: Name of the kernel struct (string)
+  - field-path: Vector of field names to traverse
+  - stack-offset: Stack offset for temporary storage (negative, e.g., -8)
+
+  Returns instruction sequence.
+
+  Example:
+    ;; Safely read sk->__sk_common.skc_daddr
+    (core-read-safe btf :r6 :r7 \"sock\" [:__sk_common :skc_daddr] -8)"
+  [btf-data dst-reg src-reg struct-name field-path stack-offset]
+  (let [type-info (btf/find-type-by-name btf-data struct-name)
+        _ (when-not type-info
+            (throw (ex-info (str "Struct not found in BTF: " struct-name)
+                           {:struct struct-name})))
+        access-info (btf/field-path->access-info btf-data (:id type-info) field-path)
+        _ (when-not access-info
+            (throw (ex-info (str "Field path not found: " field-path)
+                           {:struct struct-name :field-path field-path})))
+        offset (:byte-offset access-info)
+        field-type-id (:final-type-id access-info)
+        field-size (or (btf/get-type-size btf-data field-type-id) 8)]
+    (vec (concat
+          ;; r1 = destination (stack pointer + offset)
+          [(mov-reg :r1 :r10)]
+          [(add :r1 stack-offset)]
+          ;; r2 = size to read
+          [(mov :r2 field-size)]
+          ;; r3 = source pointer + field offset
+          [(mov-reg :r3 src-reg)]
+          [(add :r3 offset)]
+          ;; Call bpf_probe_read_kernel
+          [(call 113)]  ; bpf_probe_read_kernel = 113
+          ;; Load result from stack into destination register
+          [(ldx :dw dst-reg :r10 stack-offset)]))))
+
 ;; === Time Helpers ===
 
 (defn helper-ktime-get-ns
@@ -1532,6 +1663,79 @@
   [(mov-reg :r1 data-reg)
    (mov-reg :r2 flags-reg)
    (call 133)])  ; bpf_ringbuf_discard = 133
+
+(defn ringbuf-reserve
+  "Reserve space in ring buffer, returning pointer in dst-reg.
+
+  Higher-level function that loads the map FD and calls bpf_ringbuf_reserve.
+  The reserved pointer is returned in dst-reg (moved from r0).
+
+  Parameters:
+  - dst-reg: Destination register for reserved pointer
+  - map-fd: Ring buffer map file descriptor (integer)
+  - size: Size to reserve (integer, must be 8-byte aligned)
+
+  Returns instruction sequence. After execution:
+  - dst-reg = pointer to reserved space, or NULL on failure
+
+  Example:
+    (ringbuf-reserve :r6 ringbuf-map-fd 48)
+    ;; r6 = reserved pointer (check for NULL before use!)
+
+  Typical pattern:
+    (concat
+      (ringbuf-reserve :r6 map-fd 48)
+      ;; Check for NULL
+      [(jmp-imm :jeq :r6 0 error-offset)]
+      ;; Write to r6 + offset
+      [(stx :dw :r6 :r7 0)]  ; store data
+      (ringbuf-submit :r6))"
+  [dst-reg map-fd size]
+  (vec (concat
+        [(ld-map-fd :r1 map-fd)]  ; r1 = map fd
+        [(mov :r2 size)]           ; r2 = size
+        [(mov :r3 0)]              ; r3 = flags (0 for normal)
+        [(call 131)]               ; bpf_ringbuf_reserve
+        [(mov-reg dst-reg :r0)]))) ; dst = result
+
+(defn ringbuf-submit
+  "Submit reserved ring buffer data.
+
+  Submits data that was previously reserved with ringbuf-reserve.
+  After calling this, the reserved pointer is no longer valid.
+
+  Parameters:
+  - data-reg: Register containing pointer from ringbuf-reserve
+
+  Returns instruction sequence.
+
+  Example:
+    (ringbuf-submit :r6)
+    ;; Submits data at r6 to consumers"
+  [data-reg]
+  [(mov-reg :r1 data-reg)
+   (mov :r2 0)   ; flags = 0
+   (call 132)])  ; bpf_ringbuf_submit
+
+(defn ringbuf-discard
+  "Discard reserved ring buffer data without submitting.
+
+  Discards data that was previously reserved with ringbuf-reserve.
+  Use this instead of submit if you decide not to send the event.
+  After calling this, the reserved pointer is no longer valid.
+
+  Parameters:
+  - data-reg: Register containing pointer from ringbuf-reserve
+
+  Returns instruction sequence.
+
+  Example:
+    (ringbuf-discard :r6)
+    ;; Discards reserved space at r6"
+  [data-reg]
+  [(mov-reg :r1 data-reg)
+   (mov :r2 0)   ; flags = 0
+   (call 133)])  ; bpf_ringbuf_discard
 
 ;; === Debug Helpers ===
 

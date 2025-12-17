@@ -18,12 +18,16 @@
    - clj-ebpf.dsl.alu - Arithmetic operations
    - clj-ebpf.dsl.mem - Memory operations
    - clj-ebpf.dsl.jump - Control flow
-   - clj-ebpf.dsl.atomic - Atomic memory operations"
+   - clj-ebpf.dsl.atomic - Atomic memory operations
+   - clj-ebpf.dsl.structs - Event structure definitions
+   - clj-ebpf.dsl.kprobe - Kprobe program helpers"
   (:require [clj-ebpf.dsl.instructions :as insn]
             [clj-ebpf.dsl.alu :as alu]
             [clj-ebpf.dsl.mem :as mem]
             [clj-ebpf.dsl.jump :as jmp]
-            [clj-ebpf.dsl.atomic :as atomic]))
+            [clj-ebpf.dsl.atomic :as atomic]
+            [clj-ebpf.dsl.structs :as structs]
+            [clj-ebpf.dsl.kprobe :as kprobe]))
 
 ;; ============================================================================
 ;; Re-export Instructions
@@ -305,3 +309,58 @@
    ```"
   [prog-type & body]
   `(assemble [~@body]))
+
+;; ============================================================================
+;; Re-export Jump Helpers (new in this version)
+;; ============================================================================
+
+(def call-helper jmp/call-helper)
+
+;; ============================================================================
+;; Re-export Struct/Event Operations
+;; ============================================================================
+
+(def make-event-def structs/make-event-def)
+(def event-size structs/event-size)
+(def event-field-offset structs/event-field-offset)
+(def event-field-size structs/event-field-size)
+(def event-field-type structs/event-field-type)
+(def event-fields structs/event-fields)
+(def store-event-field structs/store-event-field)
+(def store-event-imm structs/store-event-imm)
+(def zero-event-field structs/zero-event-field)
+(def store-event-fields structs/store-event-fields)
+
+;; Re-export defevent macro
+(defmacro defevent
+  "Define an event structure for BPF programs.
+   See clj-ebpf.dsl.structs/defevent for full documentation."
+  [event-name & field-specs]
+  `(structs/defevent ~event-name ~@field-specs))
+
+;; ============================================================================
+;; Re-export Kprobe Operations
+;; ============================================================================
+
+(def kprobe-read-args kprobe/kprobe-read-args)
+(def kprobe-prologue kprobe/kprobe-prologue)
+(def kretprobe-get-return-value kprobe/kretprobe-get-return-value)
+(def build-kprobe-program kprobe/build-kprobe-program)
+(def build-kretprobe-program kprobe/build-kretprobe-program)
+(def kprobe-section-name kprobe/kprobe-section-name)
+(def kretprobe-section-name kprobe/kretprobe-section-name)
+(def make-kprobe-program-info kprobe/make-kprobe-program-info)
+(def make-kretprobe-program-info kprobe/make-kretprobe-program-info)
+
+;; Re-export kprobe macros
+(defmacro defkprobe-instructions
+  "Define a kprobe program as a function returning instructions.
+   See clj-ebpf.dsl.kprobe/defkprobe-instructions for full documentation."
+  [name options & body]
+  `(kprobe/defkprobe-instructions ~name ~options ~@body))
+
+(defmacro defkretprobe-instructions
+  "Define a kretprobe program as a function returning instructions.
+   See clj-ebpf.dsl.kprobe/defkretprobe-instructions for full documentation."
+  [name options & body]
+  `(kprobe/defkretprobe-instructions ~name ~options ~@body))

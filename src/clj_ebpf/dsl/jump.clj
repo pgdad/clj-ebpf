@@ -4,9 +4,10 @@
    Provides:
    - Conditional jumps (jeq, jne, jgt, jge, etc.)
    - Unconditional jumps (ja)
-   - Function calls (call)
+   - Function calls (call, call-helper)
    - Program exit (exit)"
-  (:require [clj-ebpf.dsl.instructions :as insn]))
+  (:require [clj-ebpf.dsl.instructions :as insn]
+            [clj-ebpf.helpers :as helpers]))
 
 ;; ============================================================================
 ;; Jump Operation Mapping
@@ -211,6 +212,27 @@
   [helper-id]
   (let [opcode (insn/make-opcode insn/BPF_JMP insn/BPF_K insn/BPF_CALL)]
     (insn/make-instruction opcode 0 0 0 helper-id)))
+
+(defn call-helper
+  "Call a BPF helper function by keyword name.
+
+   r0 = bpf_helper(r1, r2, r3, r4, r5)
+
+   Arguments:
+   - helper-key: Keyword name of the helper (e.g., :map-lookup-elem, :ringbuf-reserve)
+
+   Example:
+     (call-helper :get-current-pid-tgid)  ; Returns current PID/TGID in r0
+     (call-helper :ringbuf-reserve)       ; Reserve ring buffer space
+     (call-helper :ktime-get-ns)          ; Get kernel timestamp
+
+   See clj-ebpf.helpers/helper-functions for all available helpers."
+  [helper-key]
+  (if-let [id (helpers/get-helper-id helper-key)]
+    (call id)
+    (throw (ex-info (str "Unknown BPF helper: " helper-key)
+                    {:helper helper-key
+                     :available-helpers (helpers/list-helpers)}))))
 
 (defn tail-call
   "Generate a tail call to another BPF program.

@@ -690,3 +690,163 @@
       (when (= (:kind proto) :func-proto)
         {:return-type (:return-type proto)
          :params (get-func-params btf proto)}))))
+
+;; ============================================================================
+;; Field Name Resolution for CO-RE
+;; ============================================================================
+
+(defn field-name->index
+  "Get the member index for a field by name within a struct/union.
+
+  This is used to build CO-RE access strings for bpf_core_read operations.
+
+  Parameters:
+  - btf: BTF data (from load-btf-file)
+  - type-id: Type ID of the struct/union
+  - field-name: Field name as string or keyword
+
+  Returns the 0-based member index, or nil if not found.
+
+  Example:
+    (field-name->index btf struct-id \"skc_daddr\")
+    (field-name->index btf struct-id :skc_daddr)"
+  [btf type-id field-name]
+  (let [type-info (get-type-by-id btf type-id)
+        field-str (if (keyword? field-name) (name field-name) field-name)]
+    (when (and type-info (#{:struct :union} (:kind type-info)))
+      (let [members (get-struct-members btf type-info)]
+        (first (keep-indexed
+                (fn [idx member]
+                  (when (= (:name member) field-str)
+                    idx))
+                members))))))
+
+(defn- resolve-through-ptr
+  "Resolve type through pointer dereference.
+  Returns the pointed-to type ID, or nil if not a pointer."
+  [btf type-id]
+  (let [resolved (resolve-type btf type-id)
+        type-info (get-type-by-id btf resolved)]
+    (when (= :ptr (:kind type-info))
+      (:type type-info))))
+
+(defn field-path->access-info
+  "Convert a field path to CO-RE access information.
+
+  Given a starting type and a path of field names (or keywords), returns
+  information needed for CO-RE field access including the final offset
+  and type.
+
+  Parameters:
+  - btf: BTF data (from load-btf-file)
+  - start-type-id: Starting type ID (struct or pointer to struct)
+  - field-path: Vector of field names like [:__sk_common :skc_daddr]
+
+  Returns map with:
+  - :access-string - CO-RE access string like \"0:1:3\"
+  - :indices - Vector of member indices
+  - :final-type-id - Type ID of the final field
+  - :bit-offset - Total bit offset from start
+  - :byte-offset - Total byte offset from start (if byte-aligned)
+
+  Returns nil if path cannot be resolved.
+
+  Example:
+    (field-path->access-info btf sock-type-id [:__sk_common :skc_daddr])
+    => {:access-string \"0:1\"
+        :indices [0 1]
+        :final-type-id 123
+        :bit-offset 96
+        :byte-offset 12}"
+  [btf start-type-id field-path]
+  (loop [current-type-id start-type-id
+         remaining-path field-path
+         indices []
+         total-bit-offset 0]
+    (if (empty? remaining-path)
+      ;; Done - return result
+      {:access-string (clojure.string/join ":" (map str indices))
+       :indices indices
+       :final-type-id current-type-id
+       :bit-offset total-bit-offset
+       :byte-offset (when (zero? (mod total-bit-offset 8))
+                     (quot total-bit-offset 8))}
+
+      ;; More fields to resolve
+      (let [field-name (first remaining-path)
+            ;; Resolve through typedef/const/etc and pointer if needed
+            resolved-id (resolve-type btf current-type-id)
+            type-info (get-type-by-id btf resolved-id)
+
+            ;; If it's a pointer, dereference it first
+            [effective-id effective-info]
+            (if (= :ptr (:kind type-info))
+              (let [pointed-id (:type type-info)
+                    pointed-resolved (resolve-type btf pointed-id)]
+                [pointed-resolved (get-type-by-id btf pointed-resolved)])
+              [resolved-id type-info])]
+
+        (when (and effective-info (#{:struct :union} (:kind effective-info)))
+          (let [idx (field-name->index btf effective-id field-name)]
+            (when idx
+              (let [members (get-struct-members btf effective-info)
+                    member (nth members idx)
+                    member-bit-offset (:bit-offset member)
+                    member-type-id (:type member)]
+                (recur member-type-id
+                       (rest remaining-path)
+                       (conj indices idx)
+                       (+ total-bit-offset member-bit-offset))))))))))
+
+(defn field-path->access-string
+  "Convert a field path to a CO-RE access string.
+
+  Simplified version of field-path->access-info that just returns
+  the access string.
+
+  Parameters:
+  - btf: BTF data (from load-btf-file)
+  - start-type-id: Starting type ID
+  - field-path: Vector of field names
+
+  Returns access string like \"0:1:3\" or nil if path invalid.
+
+  Example:
+    (field-path->access-string btf sock-id [:__sk_common :skc_daddr])
+    => \"0:1\""
+  [btf start-type-id field-path]
+  (:access-string (field-path->access-info btf start-type-id field-path)))
+
+(defn get-field-offset
+  "Get the byte offset of a field within a struct.
+
+  Convenience function for direct field access.
+
+  Parameters:
+  - btf: BTF data (from load-btf-file)
+  - start-type-id: Starting type ID
+  - field-path: Vector of field names
+
+  Returns byte offset or nil if not found/not byte-aligned.
+
+  Example:
+    (get-field-offset btf sock-id [:__sk_common :skc_daddr])
+    => 12"
+  [btf start-type-id field-path]
+  (:byte-offset (field-path->access-info btf start-type-id field-path)))
+
+(defn get-field-type
+  "Get the type ID of a field.
+
+  Parameters:
+  - btf: BTF data (from load-btf-file)
+  - start-type-id: Starting type ID
+  - field-path: Vector of field names
+
+  Returns the field's type ID or nil if not found.
+
+  Example:
+    (get-field-type btf sock-id [:__sk_common :skc_daddr])
+    => 42"
+  [btf start-type-id field-path]
+  (:final-type-id (field-path->access-info btf start-type-id field-path)))
