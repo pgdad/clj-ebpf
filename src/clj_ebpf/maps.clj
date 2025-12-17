@@ -704,16 +704,20 @@
   "Get a pinned map from BPF filesystem
   You must provide the map metadata (type, key-size, value-size, etc.)"
   [path {:keys [map-type key-size value-size max-entries map-flags map-name
-                key-serializer key-deserializer value-serializer value-deserializer]
+                key-serializer key-deserializer value-serializer value-deserializer
+                percpu? percpu-value-size]
          :or {map-flags 0
               key-serializer identity
               key-deserializer identity
               value-serializer identity
-              value-deserializer identity}}]
+              value-deserializer identity
+              percpu? false
+              percpu-value-size nil}}]
   (let [fd (syscall/obj-get path)]
     (log/info "Retrieved pinned map from" path "fd:" fd)
     (->BpfMap fd map-type key-size value-size max-entries map-flags map-name
-              key-serializer key-deserializer value-serializer value-deserializer)))
+              key-serializer key-deserializer value-serializer value-deserializer
+              percpu? percpu-value-size)))
 
 ;; Clojure map-like interface
 
