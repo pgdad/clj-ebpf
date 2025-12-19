@@ -224,6 +224,136 @@
   [^BpfProgram prog options]
   (attach-kprobe prog (assoc options :retprobe? true)))
 
+;; Uprobe/Uretprobe attachment
+
+(defn- remove-uprobe-event
+  "Remove uprobe event from tracefs"
+  [event-name]
+  (let [uprobe-events-path "/sys/kernel/debug/tracing/uprobe_events"
+        event-def (str "-:" event-name "\n")]
+    (try
+      (spit uprobe-events-path event-def :append true)
+      (log/debug "Removed uprobe event:" event-name)
+      (catch Exception e
+        (log/warn "Failed to remove uprobe event" event-name ":" e)))))
+
+(defn- write-uprobe-event
+  "Write uprobe event to tracefs
+
+  For uprobes, the event definition is:
+    p:event_name /path/to/binary:offset   (for entry probe)
+    r:event_name /path/to/binary:offset   (for return probe)
+
+  The offset can be:
+    - A hex offset like 0x1234
+    - A symbol name (if the binary has symbols)"
+  [event-name binary-path offset is-retprobe?]
+  (let [tracefs-path "/sys/kernel/debug/tracing"
+        uprobe-events-path (str tracefs-path "/uprobe_events")
+        ;; Format offset - if it's a number, convert to hex
+        offset-str (cond
+                    (number? offset) (format "0x%x" offset)
+                    (string? offset) offset
+                    :else (str offset))
+        event-def (str (if is-retprobe? "r:" "p:")
+                      event-name " " binary-path ":" offset-str "\n")]
+    ;; First try to remove the event if it exists (ignore errors)
+    (try
+      (remove-uprobe-event event-name)
+      (catch Exception _ nil))
+    ;; Now create the event
+    (try
+      (spit uprobe-events-path event-def :append true)
+      (log/debug "Created uprobe event:" event-def)
+      (catch Exception e
+        (throw (ex-info "Failed to create uprobe event"
+                       {:event-name event-name
+                        :binary-path binary-path
+                        :offset offset
+                        :is-retprobe is-retprobe?
+                        :cause e}))))))
+
+(defn attach-uprobe
+  "Attach BPF program to a uprobe using perf events
+
+  This uses the tracefs-based approach which is widely compatible:
+  1. Creates a uprobe event in /sys/kernel/debug/tracing/uprobe_events
+  2. Opens a perf event for that tracepoint
+  3. Attaches the BPF program via PERF_EVENT_IOC_SET_BPF
+
+  Options:
+  - :binary - Path to the binary or library to probe (e.g., \"/lib/x86_64-linux-gnu/libc.so.6\")
+  - :offset - Offset or symbol name within the binary (e.g., 0x9d850 or \"malloc\")
+  - :retprobe? - If true, attach to function return (default: false)
+  - :pid - PID to attach to (default: -1 for all processes)
+  - :cpu - CPU to attach to (default: 0)
+
+  Example:
+    ;; Attach to malloc in libc
+    (attach-uprobe prog {:binary \"/lib/x86_64-linux-gnu/libc.so.6\"
+                         :offset \"malloc\"})
+
+    ;; Attach to specific offset
+    (attach-uprobe prog {:binary \"/usr/bin/myapp\"
+                         :offset 0x1234})"
+  [^BpfProgram prog {:keys [binary offset retprobe? pid cpu]
+                     :or {retprobe? false pid -1 cpu 0}}]
+  (let [;; Generate unique event name - sanitize binary name for event name
+        binary-basename (last (str/split binary #"/"))
+        offset-str (if (number? offset) (format "%x" offset) (str offset))
+        event-name (str (if retprobe? "uretp_" "uprobe_")
+                       (str/replace binary-basename #"[^a-zA-Z0-9_]" "_")
+                       "_" (str/replace offset-str #"[^a-zA-Z0-9_]" "_")
+                       "_" (System/currentTimeMillis))
+
+        ;; Create uprobe event in tracefs
+        _ (write-uprobe-event event-name binary offset retprobe?)
+
+        ;; Get the event ID from tracefs
+        tracepoint-id (get-tracepoint-id "uprobes" event-name)
+        _ (log/debug "Uprobe event" event-name "has tracepoint ID:" tracepoint-id)
+
+        ;; Open perf event
+        event-fd (syscall/perf-event-open
+                   (const/perf-type :tracepoint)
+                   tracepoint-id
+                   pid
+                   cpu
+                   -1   ; group_fd
+                   0)   ; flags
+
+        ;; Attach BPF program
+        _ (syscall/ioctl event-fd (const/perf-event-ioc :set-bpf) (:fd prog))
+
+        ;; Enable the event
+        _ (syscall/ioctl event-fd (const/perf-event-ioc :enable))
+
+        ;; Create detach function
+        detach-fn (fn []
+                   (try
+                     (syscall/ioctl event-fd (const/perf-event-ioc :disable))
+                     (catch Exception e
+                       (log/warn "Failed to disable perf event:" e)))
+                   (syscall/close-fd event-fd)
+                   (remove-uprobe-event event-name))
+
+        attachment (->ProgramAttachment
+                     (if retprobe? :uretprobe :uprobe)
+                     (str binary ":" offset)
+                     event-fd
+                     detach-fn)]
+
+    (log/info "Attached" (if retprobe? "uretprobe" "uprobe")
+              "to" binary "at" offset "event-fd:" event-fd)
+
+    ;; Add attachment to program
+    (update prog :attachments conj attachment)))
+
+(defn attach-uretprobe
+  "Attach BPF program to a uretprobe (function return probe)"
+  [^BpfProgram prog options]
+  (attach-uprobe prog (assoc options :retprobe? true)))
+
 ;; Tracepoint attachment
 
 (defn attach-tracepoint
