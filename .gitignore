@@ -39,3 +39,9 @@ Thumbs.db
 
 # Testing
 .nrepl-history
+
+# QEMU VM files
+qemu-arm64/*.img
+qemu-arm64/*.qcow2
+qemu-arm64/*.pid
+qemu-arm64/*.log

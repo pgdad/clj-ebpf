@@ -1,0 +1,57 @@
+#cloud-config
+# Cloud-init configuration for clj-ebpf ARM64 test VM
+#
+# This configures the VM with:
+# - Ubuntu user with sudo access
+# - Java 21 (required for Panama FFI)
+# - Clojure CLI tools
+# - SSH access for remote test execution
+
+hostname: clj-ebpf-arm64
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo, docker]
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDDIzZEJIlxoJhcBq/2BdJO/CBusvw1tSO4xBZkgUdOuHjO0jxffvMpyQsTOWAMEorVJ9/dBiQtnF8FgdTXHHQuiZki6qDqrlbIMnvMiSQXbsOD2gqgxvGB4rZ/BT0LFTio1Evu6qS89PeAf+sbhtF9vD3DTFVxZk9dPikWq5pvVydTekYIzZb6/2OiVN+GjMr90/rxdP4hsZ227kKlGrwmDSa8H3A4fkVmG1OAXw8CIqarm2RG1h7jxG0zFwpzuvR/X7q7IyCSyChED4QqLdUozgvNfNkMbeeLN1I8HBf60SZe+e4W1nEnNqLpa63YjmlTaEzRbqtKpd47aZmHZbE4RkAjHTXpj2NgL4uhRZGVHr+Mr7RM3FTtpOKMsare3HKrnQcirqJK0jbNpCyUVAXQ+U3LrOJf3k8eDE5nahlYE5qY1WjyagDcR7pHleouLxKpEvgsO78/8BwSTbsKxKvGYzZGPYIHejUmQ547xfrKhWGAfylF77LWHjh+5Kz71Uc= esa@esa-System-Product-Name
+
+package_update: true
+package_upgrade: true
+
+packages:
+  # Java 21 for Panama FFI
+  - openjdk-21-jdk
+  # Build tools
+  - curl
+  - wget
+  - git
+  - rlwrap
+  # BPF tools (for debugging)
+  - linux-tools-generic
+  - bpftool
+  # Utilities
+  - htop
+  - vim
+  - rsync
+
+# Run commands after package installation
+runcmd:
+  # Install Clojure CLI
+  - curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+  - chmod +x linux-install.sh
+  - ./linux-install.sh
+  - rm linux-install.sh
+  # Set Java 21 as default
+  - update-alternatives --set java /usr/lib/jvm/java-21-openjdk-arm64/bin/java
+  # Create workspace directory
+  - mkdir -p /home/ubuntu/clj-ebpf
+  - chown -R ubuntu:ubuntu /home/ubuntu/clj-ebpf
+  # Mount BPF filesystem
+  - mount -t bpf bpf /sys/fs/bpf || true
+  # Show completion message
+  - echo "VM provisioning complete!" > /home/ubuntu/READY
+
+# Final message
+final_message: "clj-ebpf ARM64 VM ready after $UPTIME seconds"
