@@ -2,7 +2,8 @@
   "Tests for BPF constants - CI-safe (no BPF privileges required)"
   {:ci-safe true}
   (:require [clojure.test :refer :all]
-            [clj-ebpf.constants :as const]))
+            [clj-ebpf.constants :as const]
+            [clj-ebpf.arch :as arch]))
 
 (deftest test-cmd-conversions
   (testing "BPF command keyword to number conversion"
@@ -57,10 +58,23 @@
 
 (deftest test-constants-defined
   (testing "Important constants are defined"
-    (is (= 321 const/BPF_SYSCALL_NR))
+    ;; BPF_SYSCALL_NR is architecture-specific - verify it matches arch module
+    (is (= (arch/get-syscall-nr :bpf) const/BPF_SYSCALL_NR))
     (is (= 16 const/BPF_OBJ_NAME_LEN))
     (is (= 8 const/BPF_TAG_SIZE))
     (is (= (* 256 1024) const/BPF_LOG_BUF_SIZE))))
+
+(deftest test-architecture-detection
+  (testing "Architecture is detected and supported"
+    (is (arch/supported-arch?))
+    (is (keyword? arch/current-arch))
+    (is (contains? #{:x86_64 :arm64 :s390x :ppc64le :riscv64} arch/current-arch)))
+
+  (testing "Syscall numbers are valid for current architecture"
+    (is (pos-int? const/BPF_SYSCALL_NR))
+    (is (pos-int? const/PERF_EVENT_OPEN_SYSCALL_NR))
+    ;; Architecture-specific value ranges (all known values are between 200-400)
+    (is (<= 200 const/BPF_SYSCALL_NR 400))))
 
 (deftest test-errno-values
   (testing "Common errno values"
