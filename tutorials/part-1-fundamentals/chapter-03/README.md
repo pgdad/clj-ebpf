@@ -440,27 +440,156 @@ The BPF verifier ensures programs are safe by checking:
 (bpf/exit-insn)
 ```
 
-### Labels
+### Label-Based Assembly (`clj-ebpf.asm`)
+
+The `clj-ebpf.asm` namespace provides symbolic labels for jump targets,
+eliminating error-prone manual offset calculations.
+
+#### The Problem with Manual Offsets
 
 ```clojure
-(defn program-with-labels []
-  (bpf/assemble-with-labels
-    {:start
-     [(bpf/mov :r0 0)
-      (bpf/jmp :check)]
+;; Manual offsets are fragile and error-prone:
+(dsl/assemble
+  [(dsl/jmp-imm :jeq :r1 0 2)  ; Must count: offset = target_pos - current_pos - 1
+   (dsl/mov :r0 1)
+   (dsl/jmp 1)                  ; Must recalculate if code changes!
+   (dsl/mov :r0 0)
+   (dsl/exit-insn)])
+```
 
-     :check
-     [(bpf/jmp-imm :jeq :r0 0 :zero)
-      (bpf/jmp :nonzero)]
+#### The Solution: Symbolic Labels
 
-     :zero
-     [(bpf/mov :r0 1)
-      (bpf/exit-insn)]
+```clojure
+(require '[clj-ebpf.asm :as asm]
+         '[clj-ebpf.dsl :as dsl])
 
-     :nonzero
-     [(bpf/mov :r0 2)
-      (bpf/exit-insn)]}
-    :start))  ; Entry point
+;; Labels automatically resolve to correct offsets:
+(asm/assemble-with-labels
+  [(asm/jmp-imm :jeq :r1 0 :is-zero)  ; Just name the target!
+   (dsl/mov :r0 1)
+   (asm/jmp :done)                     ; Readable intent
+   (asm/label :is-zero)                ; Label definition
+   (dsl/mov :r0 0)
+   (asm/label :done)
+   (dsl/exit-insn)])
+```
+
+#### Label API
+
+```clojure
+;; Create a label (pseudo-instruction, generates no bytecode)
+(asm/label :my-target)
+;; => {:type :label :name :my-target}
+
+;; Symbolic jump functions (accept keyword or numeric offset)
+(asm/jmp :done)                       ; Unconditional jump
+(asm/jmp-imm :jeq :r0 0 :is-zero)    ; Conditional with immediate
+(asm/jmp-reg :jgt :r0 :r1 :greater)  ; Conditional with register
+
+;; Backwards compatible - numbers still work
+(asm/jmp 5)                          ; Returns bytecode directly
+(asm/jmp-imm :jeq :r0 0 3)           ; Returns bytecode directly
+```
+
+#### Forward and Backward Jumps
+
+```clojure
+;; Forward jump - jump to code that comes later
+(asm/assemble-with-labels
+  [(asm/jmp-imm :jeq :r0 0 :found)   ; Jump forward to :found
+   (dsl/mov :r0 -1)                   ; Not found
+   (asm/jmp :done)
+   (asm/label :found)                 ; Target of forward jump
+   (dsl/mov :r0 1)
+   (asm/label :done)
+   (dsl/exit-insn)])
+
+;; Backward jump - loop pattern
+(asm/assemble-with-labels
+  [(dsl/mov :r0 0)
+   (asm/label :loop)                  ; Loop start
+   (asm/jmp-imm :jeq :r1 0 :done)
+   (dsl/sub :r1 1)
+   (dsl/add :r0 1)
+   (asm/jmp :loop)                    ; Jump back to :loop
+   (asm/label :done)
+   (dsl/exit-insn)])
+```
+
+#### Helper Functions with Labels
+
+```clojure
+;; asm/check-bounds works with labels
+(asm/check-bounds :r7 :r8 14 :error :r9)
+;; Generates: mov r9, r7; add r9, 14; jgt r9, r8 -> :error
+
+;; Use in XDP program
+(asm/assemble-with-labels
+  [(dsl/mov-reg :r6 :r1)
+   (dsl/ldx :w :r7 :r6 0)
+   (dsl/ldx :w :r8 :r6 4)
+   (asm/check-bounds :r7 :r8 14 :pass :r9)
+   ;; ... packet processing ...
+   (asm/label :pass)
+   (dsl/mov :r0 2)  ; XDP_PASS
+   (dsl/exit-insn)])
+```
+
+#### Error Detection
+
+The label resolver detects common errors:
+
+```clojure
+;; Undefined label - throws exception
+(asm/resolve-labels
+  [(asm/jmp :nonexistent)])
+;; => ExceptionInfo: Undefined label: :nonexistent
+
+;; Duplicate label - throws exception
+(asm/resolve-labels
+  [(asm/label :dup)
+   (dsl/mov :r0 0)
+   (asm/label :dup)])
+;; => ExceptionInfo: Duplicate label: :dup
+```
+
+#### Complete XDP Example with Labels
+
+```clojure
+(defn build-ipv4-filter []
+  (asm/assemble-with-labels
+    [;; Save context
+     (dsl/mov-reg :r6 :r1)
+
+     ;; Load data pointers
+     (dsl/ldx :w :r7 :r6 0)    ; data
+     (dsl/ldx :w :r8 :r6 4)    ; data_end
+
+     ;; Check Ethernet bounds
+     (asm/check-bounds :r7 :r8 14 :pass :r9)
+
+     ;; Load EtherType
+     (dsl/ldx :h :r9 :r7 12)
+
+     ;; Check if IPv4
+     (asm/jmp-imm :jne :r9 0x0008 :drop)
+
+     ;; IPv4 - pass
+     (dsl/mov :r0 2)
+     (asm/jmp :exit)
+
+     ;; Not IPv4 - drop
+     (asm/label :drop)
+     (dsl/mov :r0 1)
+     (asm/jmp :exit)
+
+     ;; Bounds check failed - pass (safe default)
+     (asm/label :pass)
+     (dsl/mov :r0 2)
+
+     ;; Common exit
+     (asm/label :exit)
+     (dsl/exit-insn)]))
 ```
 
 ### Helper Wrappers
@@ -476,7 +605,7 @@ The BPF verifier ensures programs are safe by checking:
 
 ## Labs
 
-This chapter includes three hands-on labs:
+This chapter includes four hands-on labs:
 
 ### Lab 3.1: Packet Filter
 Build a network packet filter using BPF instructions
@@ -486,6 +615,9 @@ Capture and parse system call arguments
 
 ### Lab 3.3: Custom Protocol Parser
 Parse a custom network protocol
+
+### Lab 3.4: Label-Based Assembly
+Build XDP and TC programs using symbolic labels to eliminate manual offset calculations
 
 ## Navigation
 
