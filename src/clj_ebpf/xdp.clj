@@ -121,20 +121,22 @@
       (throw (ex-info "Failed to bind netlink socket" {:errno (- result)})))))
 
 (defn- send-netlink
-  "Send netlink message using architecture-correct syscall number"
+  "Send netlink message using write syscall.
+   For bound netlink sockets, write() works like sendto() with NULL dest."
   [sock-fd msg-bytes]
-  (let [sendto-nr (arch/get-syscall-nr :sendto)
+  (let [write-nr (arch/get-syscall-nr :write)
         msg-seg (utils/bytes->segment msg-bytes)
-        result (syscall/raw-syscall sendto-nr sock-fd msg-seg (count msg-bytes) 0)]
+        result (syscall/raw-syscall write-nr sock-fd msg-seg (count msg-bytes))]
     (when (neg? result)
       (throw (ex-info "Failed to send netlink message" {:errno (- result)})))))
 
 (defn- recv-netlink
-  "Receive netlink message using architecture-correct syscall number"
+  "Receive netlink message using read syscall.
+   For bound netlink sockets, read() works like recvfrom() with NULL src."
   [sock-fd buf-size]
-  (let [recvfrom-nr (arch/get-syscall-nr :recvfrom)
+  (let [read-nr (arch/get-syscall-nr :read)
         buf-seg (utils/allocate-memory buf-size)
-        result (syscall/raw-syscall recvfrom-nr sock-fd buf-seg buf-size 0)]
+        result (syscall/raw-syscall read-nr sock-fd buf-seg buf-size)]
     (when (neg? result)
       (throw (ex-info "Failed to receive netlink message" {:errno (- result)})))
     (utils/segment->bytes buf-seg result)))
@@ -209,7 +211,9 @@
 (defn- parse-netlink-ack
   "Parse netlink ACK/error message"
   [response-bytes]
-  (let [nlmsg-type (utils/bytes->int (byte-array (take 2 (drop 4 response-bytes))))
+  (when (< (count response-bytes) 20)
+    (throw (ex-info "Netlink response too short" {:length (count response-bytes)})))
+  (let [nlmsg-type (utils/bytes->short (byte-array (take 2 (drop 4 response-bytes))))
         error-code (utils/bytes->int (byte-array (take 4 (drop 16 response-bytes))))]
     (when (not= nlmsg-type NLMSG_ERROR)
       (throw (ex-info "Unexpected netlink response type" {:type nlmsg-type})))
