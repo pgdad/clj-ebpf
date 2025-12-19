@@ -62,11 +62,12 @@ echo "✓ QEMU packages installed"
 
 # Step 2: Download Ubuntu ARM64 cloud image
 echo ""
-echo "Step 2: Downloading Ubuntu 22.04 ARM64 cloud image..."
+echo "Step 2: Downloading Ubuntu 24.04 ARM64 cloud image (kernel 6.8+)..."
 cd "$SCRIPT_DIR"
 
-IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
-IMAGE_FILE="jammy-server-cloudimg-arm64.img"
+# Ubuntu 24.04 Noble has kernel 6.8+ which supports all BPF batch operations
+IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img"
+IMAGE_FILE="noble-server-cloudimg-arm64.img"
 
 if [[ -f "$IMAGE_FILE" ]]; then
     echo "Image already exists, checking for updates..."
