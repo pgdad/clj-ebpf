@@ -329,17 +329,21 @@
    :regs-intr 0x40000})
 
 ;; IOCTL commands
+;; These use Linux _IO/_IOW/_IOR macros: _IOC(dir, type, nr, size)
+;; dir: 0=none, 1=write, 2=read, 3=read/write
+;; type: '$' = 0x24 for perf
+;; Formula: (dir << 30) | (size << 16) | (type << 8) | nr
 (def perf-event-ioc
-  {:enable 0x2400
-   :disable 0x2401
-   :refresh 0x2402
-   :reset 0x2403
-   :period 0x2404
-   :set-output 0x2405
-   :set-filter 0x2406
-   :id 0x2407
-   :set-bpf 0x2408
-   :pause-output 0x2409
+  {:enable 0x2400           ; _IO('$', 0)
+   :disable 0x2401          ; _IO('$', 1)
+   :refresh 0x40042402      ; _IOW('$', 2, u32)
+   :reset 0x2403            ; _IO('$', 3)
+   :period 0x40082404       ; _IOW('$', 4, u64)
+   :set-output 0x2405       ; _IO('$', 5)
+   :set-filter 0x40082406   ; _IOW('$', 6, u64)
+   :id 0x80082407           ; _IOR('$', 7, u64)
+   :set-bpf 0x40042408      ; _IOW('$', 8, u32)
+   :pause-output 0x40042409 ; _IOW('$', 9, u32)
    :query-bpf 0x240a
    :modify-attributes 0x240b})
 

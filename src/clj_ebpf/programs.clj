@@ -197,12 +197,16 @@
   "Attach BPF program to a tracepoint
 
   Options:
-  - :category - Tracepoint category (e.g., 'syscalls')
-  - :name - Tracepoint name (e.g., 'sys_enter_execve')
+  - :category - Tracepoint category (e.g., 'sched')
+  - :name - Tracepoint name (e.g., 'sched_switch')
   - :pid - PID to attach to (default: -1 for all processes)
-  - :cpu - CPU to attach to (default: -1 for all CPUs)"
+  - :cpu - CPU to attach to (default: 0)
+
+  Note: For perf-based tracepoints, at least one of pid or cpu must be non-negative.
+  If pid=-1, you must specify a cpu. If cpu=-1, you must specify a pid.
+  Use :cpu 0 to attach to all processes on CPU 0."
   [^BpfProgram prog {:keys [category name pid cpu]
-                     :or {pid -1 cpu -1}}]
+                     :or {pid -1 cpu 0}}]
   (let [tracepoint-id (get-tracepoint-id category name)
 
         ;; Open perf event

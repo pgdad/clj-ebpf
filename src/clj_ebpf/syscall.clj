@@ -3,7 +3,7 @@
   (:require [clj-ebpf.arch :as arch]
             [clj-ebpf.constants :as const]
             [clojure.tools.logging :as log])
-  (:import [java.lang.foreign Arena MemorySegment SymbolLookup Linker FunctionDescriptor ValueLayout]
+  (:import [java.lang.foreign Arena MemorySegment SymbolLookup Linker Linker$Option FunctionDescriptor ValueLayout MemoryLayout]
            [java.lang.invoke MethodHandle]))
 
 ;; Panama FFI setup
@@ -530,26 +530,43 @@
                       {:libc-lookup libc-lookup})))))
 
 (defn perf-event-open
-  "Open a perf event (used for kprobes/uprobes)"
+  "Open a perf event (used for kprobes/uprobes/tracepoints)"
   [event-type config pid cpu group-fd flags]
-  (let [attr-size 128
-        attr-mem (allocate-zeroed attr-size)]
-    ;; type
-    (.set attr-mem C_INT 0 event-type)
-    ;; size
-    (.set attr-mem C_INT 4 attr-size)
-    ;; config
-    (.set attr-mem C_LONG 8 config)
-    ;; sample_period / sample_freq union - set to 1
-    (.set attr-mem C_LONG 16 1)
-    ;; sample_type
-    (.set attr-mem C_LONG 24 0)
-    ;; read_format
-    (.set attr-mem C_LONG 32 0)
-    ;; flags as bitfield (disabled=1)
-    (.set attr-mem C_LONG 40 1)
+  (let [attr-size 136  ; sizeof(struct perf_event_attr) on modern kernels
+        ;; Use a confined arena for this specific allocation to ensure proper memory handling
+        confined-arena (Arena/ofConfined)
+        attr-mem (.allocate confined-arena (long attr-size))]
+    ;; Zero the memory
+    (.fill attr-mem (byte 0))
 
-    (let [result (.invokeWithArguments ^java.lang.invoke.MethodHandle perf-event-open-syscall-fn
+    ;; struct perf_event_attr layout:
+    ;; offset 0:  u32 type
+    ;; offset 4:  u32 size
+    ;; offset 8:  u64 config
+    ;; offset 16: u64 sample_period/sample_freq
+    ;; offset 24: u64 sample_type
+    ;; offset 32: u64 read_format
+    ;; offset 40: u64 flags (bitfield: disabled=bit0, inherit=bit1, ...)
+    ;; offset 48: u32 wakeup_events/wakeup_watermark
+
+    ;; Set fields using ValueLayout directly for clarity
+    (.set attr-mem ValueLayout/JAVA_INT 0 (int event-type))      ; type
+    (.set attr-mem ValueLayout/JAVA_INT 4 (int 136))             ; size
+    (.set attr-mem ValueLayout/JAVA_LONG 8 (long config))        ; config
+    (.set attr-mem ValueLayout/JAVA_LONG 16 (long 1))            ; sample_period = 1
+    (.set attr-mem ValueLayout/JAVA_LONG 24 (long 0x400))        ; sample_type = PERF_SAMPLE_RAW
+    (.set attr-mem ValueLayout/JAVA_INT 48 (int 1))              ; wakeup_events = 1
+
+    ;; Create fresh method handle for syscall to ensure proper memory handling
+    (let [libc (SymbolLookup/libraryLookup "libc.so.6" confined-arena)
+          sym (.find libc "syscall")
+          _ (when-not (.isPresent sym)
+              (throw (ex-info "Cannot find syscall in libc" {})))
+          lnk (Linker/nativeLinker)
+          desc (FunctionDescriptor/of C_LONG
+                                      (into-array MemoryLayout [C_LONG C_POINTER C_INT C_INT C_INT C_LONG]))
+          handle (.downcallHandle lnk (.get sym) desc (into-array Linker$Option []))
+          result (.invokeWithArguments handle
                                       [(long const/PERF_EVENT_OPEN_SYSCALL_NR)
                                        attr-mem
                                        (int pid)
@@ -561,12 +578,15 @@
       (if (< result-int 0)
         (let [errno (get-errno)
               errno-kw (errno->keyword errno)]
+          (.close confined-arena)
           (log/error "perf_event_open failed, errno:" errno errno-kw)
           (throw (ex-info (str "perf_event_open failed: " errno-kw)
                           {:errno errno
                            :errno-keyword errno-kw
                            :event-type event-type
                            :config config})))
+        ;; Don't close the arena yet - the fd is still valid
+        ;; The arena will be auto-closed when the JVM exits
         (int result)))))
 
 ;; IOCTL syscall
