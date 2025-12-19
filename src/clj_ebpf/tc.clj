@@ -30,16 +30,20 @@
 ;; TC handles and priorities (unsigned 32-bit values)
 ;; These are defined as longs to avoid signed integer overflow
 (def ^:private TC_H_CLSACT 0xFFFF0000)
+(def ^:private TC_H_INGRESS 0xFFFFFFF1)  ; Parent for clsact qdisc
 (def ^:private TC_H_MIN_INGRESS 0xFFF2)
 (def ^:private TC_H_MIN_EGRESS 0xFFF3)
 
 ;; TC attributes
 (def ^:private TCA_KIND 1)
 (def ^:private TCA_OPTIONS 2)
-(def ^:private TCA_BPF_FLAGS 2)
-(def ^:private TCA_BPF_FD 5)
-(def ^:private TCA_BPF_NAME 6)
-(def ^:private TCA_BPF_FLAGS_GEN 7)
+
+;; TCA_BPF attributes (from linux/pkt_cls.h enum)
+;; TCA_BPF_UNSPEC = 0, ACT = 1, POLICE = 2, CLASSID = 3, OPS_LEN = 4, OPS = 5
+(def ^:private TCA_BPF_FD 6)
+(def ^:private TCA_BPF_NAME 7)
+(def ^:private TCA_BPF_FLAGS 8)
+(def ^:private TCA_BPF_FLAGS_GEN 9)
 
 ;; TC BPF flags
 (def ^:private TCA_BPF_FLAG_ACT_DIRECT 1)
@@ -180,11 +184,12 @@
   - rtattr for TCA_KIND (\"clsact\")"
   [msg-type ifindex flags]
   (let [;; Build tcmsg structure
+        ;; For clsact qdisc: handle=TC_H_CLSACT, parent=TC_H_INGRESS
         tcmsg (utils/pack-struct [[:u8 0]               ; family = AF_UNSPEC
                                   [:u8 0] [:u16 0]      ; padding
                                   [:u32 ifindex]        ; ifindex
                                   [:u32 TC_H_CLSACT]    ; handle
-                                  [:u32 TC_H_CLSACT]    ; parent
+                                  [:u32 TC_H_INGRESS]   ; parent (0xFFFFFFF1)
                                   [:u32 0]])            ; info
 
         ;; Build TCA_KIND attribute with "clsact"
@@ -351,8 +356,8 @@
       (try
         (add-clsact-qdisc ifindex)
         (catch Exception e
-          ;; Ignore error if qdisc already exists
-          (when-not (re-find #"File exists" (.getMessage e))
+          ;; Ignore EEXIST error (errno 17) if qdisc already exists
+          (when-not (= 17 (:errno (ex-data e)))
             (throw e)))))
 
     (let [sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
