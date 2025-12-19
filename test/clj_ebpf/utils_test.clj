@@ -91,6 +91,49 @@
           unpacked (utils/unpack-struct packed [:u32 :u32 :u64])]
       (is (= [123 456 789] unpacked)))))
 
+(deftest test-unsigned-32bit-packing
+  (testing "Pack unsigned 32-bit values that exceed signed int max"
+    ;; TC_H_CLSACT = 0xFFFF0000 (4294901760) - exceeds Integer.MAX_VALUE
+    (let [tc-h-clsact 0xFFFF0000
+          packed (utils/pack-struct [[:u32 tc-h-clsact]])
+          ;; In little-endian: 0x00, 0x00, 0xFF, 0xFF
+          expected-bytes [0x00 0x00 0xFF 0xFF]]
+      (is (= 4 (count packed)))
+      (is (= expected-bytes (map #(bit-and % 0xFF) (seq packed))))))
+
+  (testing "Pack 0xFFFFFFFF (max unsigned 32-bit)"
+    (let [max-u32 0xFFFFFFFF
+          packed (utils/pack-struct [[:u32 max-u32]])
+          ;; All 0xFF bytes
+          expected-bytes [0xFF 0xFF 0xFF 0xFF]]
+      (is (= 4 (count packed)))
+      (is (= expected-bytes (map #(bit-and % 0xFF) (seq packed))))))
+
+  (testing "Pack TC_H_MIN_INGRESS (0xFFF2) and combined TC handle"
+    ;; TC_H_CLSACT | TC_H_MIN_INGRESS = 0xFFFF0000 | 0xFFF2 = 0xFFFFFFF2
+    (let [tc-handle (bit-or 0xFFFF0000 0xFFF2)
+          packed (utils/pack-struct [[:u32 tc-handle]])
+          ;; In little-endian: 0xF2, 0xFF, 0xFF, 0xFF
+          expected-bytes [0xF2 0xFF 0xFF 0xFF]]
+      (is (= 4 (count packed)))
+      (is (= expected-bytes (map #(bit-and % 0xFF) (seq packed))))))
+
+  (testing "Pack multiple unsigned values including large ones"
+    (let [values [[:u32 0xFFFF0000]
+                  [:u32 0x12345678]
+                  [:u32 0xFFFFFFFF]]
+          packed (utils/pack-struct values)]
+      (is (= 12 (count packed)))
+      ;; Verify round-trip
+      (let [unpacked (utils/unpack-struct packed [:u32 :u32 :u32])]
+        ;; unpack-struct returns unsigned values as longs
+        (is (= [0xFFFF0000 0x12345678 0xFFFFFFFF] unpacked)))))
+
+  (testing "Pack does not throw on large unsigned 16-bit values"
+    (let [packed (utils/pack-struct [[:u16 0xFFFF]])]
+      (is (= 2 (count packed)))
+      (is (= [0xFF 0xFF] (map #(bit-and % 0xFF) (seq packed)))))))
+
 (deftest test-kernel-version
   (testing "Parse kernel version"
     (is (= 0x050f00 (utils/parse-kernel-version "5.15.0")))

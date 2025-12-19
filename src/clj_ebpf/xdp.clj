@@ -89,6 +89,9 @@
 (def ^:private IFLA_XDP_FD 1)
 (def ^:private IFLA_XDP_FLAGS 3)
 
+;; Netlink attribute flags
+(def ^:private NLA_F_NESTED 0x8000)
+
 ;; Netlink socket syscalls
 (def ^:private AF_NETLINK 16)
 (def ^:private SOCK_RAW 3)
@@ -131,54 +134,70 @@
       (throw (ex-info "Failed to receive netlink message" {:errno (- result)})))
     (utils/segment->bytes buf-seg result)))
 
+(defn- nla-align
+  "Align length to 4-byte boundary (NLA_ALIGN)"
+  [len]
+  (bit-and (+ len 3) (bit-not 3)))
+
+(defn- build-nla
+  "Build a netlink attribute (struct nlattr).
+
+  Parameters:
+  - nla-type: Attribute type (may include flags like NLA_F_NESTED)
+  - data: Payload data as byte sequence
+
+  Returns byte sequence with proper padding.
+  nla_len includes header (4 bytes) but NOT padding."
+  [nla-type data]
+  (let [nla-len (+ 4 (count data))           ; Header (4 bytes) + data
+        padded-len (nla-align nla-len)
+        padding (- padded-len nla-len)]
+    (concat (utils/pack-struct [[:u16 nla-len]
+                                [:u16 nla-type]])
+            data
+            (repeat padding 0))))
+
 (defn- build-netlink-msg
   "Build netlink RTM_SETLINK message for XDP attachment.
 
   Structure:
   - nlmsghdr: {len, type, flags, seq, pid}
   - ifinfomsg: {family, type, index, flags, change}
-  - rtattr for IFLA_XDP containing:
+  - rtattr for IFLA_XDP (nested) containing:
     - rtattr for IFLA_XDP_FD
     - rtattr for IFLA_XDP_FLAGS"
   [ifindex prog-fd xdp-flags]
-  (let [;; Helper to build rtattr
-        build-rtattr (fn [rta-type data]
-                      (let [rta-len (+ 4 (count data))] ; rtattr header is 4 bytes
-                        (concat (utils/pack-struct [[:u16 rta-len] [:u16 rta-type]])
-                               data)))
+  (let [;; Build inner XDP attributes with proper alignment
+        ;; IFLA_XDP_FD: 4-byte header + 4-byte FD value = 8 bytes (already aligned)
+        xdp-fd-attr (build-nla IFLA_XDP_FD (utils/pack-struct [[:u32 prog-fd]]))
 
-        ;; Build inner XDP attributes
-        xdp-fd-attr (build-rtattr IFLA_XDP_FD (utils/pack-struct [[:u32 prog-fd]]))
-        xdp-flags-attr (build-rtattr IFLA_XDP_FLAGS (utils/pack-struct [[:u32 xdp-flags]]))
+        ;; IFLA_XDP_FLAGS: 4-byte header + 4-byte flags = 8 bytes (already aligned)
+        xdp-flags-attr (build-nla IFLA_XDP_FLAGS (utils/pack-struct [[:u32 xdp-flags]]))
 
-        ;; Combine XDP attributes
-        xdp-data (concat xdp-fd-attr xdp-flags-attr)
+        ;; Combine inner XDP attributes
+        xdp-data (vec (concat xdp-fd-attr xdp-flags-attr))
 
-        ;; Align to 4 bytes
-        xdp-data-padded (let [padding (mod (- 4 (mod (count xdp-data) 4)) 4)]
-                         (concat xdp-data (repeat padding 0)))
+        ;; Build IFLA_XDP rtattr with NLA_F_NESTED flag
+        ifla-xdp (build-nla (bit-or IFLA_XDP NLA_F_NESTED) xdp-data)
 
-        ;; Build IFLA_XDP rtattr
-        ifla-xdp (build-rtattr IFLA_XDP (vec xdp-data-padded))
-
-        ;; Build ifinfomsg
-        ifinfomsg (utils/pack-struct [[:u8 0]      ; family = AF_UNSPEC
-                                      [:u8 0]      ; reserved
-                                      [:u16 0]     ; type
-                                      [:u32 ifindex] ; index
-                                      [:u32 0]     ; flags
-                                      [:u32 0]])   ; change mask
+        ;; Build ifinfomsg (16 bytes)
+        ifinfomsg (utils/pack-struct [[:u8 0]        ; ifi_family = AF_UNSPEC
+                                      [:u8 0]        ; __ifi_pad (reserved)
+                                      [:u16 0]       ; ifi_type
+                                      [:u32 ifindex] ; ifi_index
+                                      [:u32 0]       ; ifi_flags
+                                      [:u32 0]])     ; ifi_change
 
         ;; Combine ifinfomsg + rtattrs
         payload (concat ifinfomsg ifla-xdp)
 
-        ;; Build nlmsghdr
-        nlmsg-len (+ 16 (count payload)) ; nlmsghdr is 16 bytes
-        nlmsghdr (utils/pack-struct [[:u32 nlmsg-len]                    ; length
-                                     [:u16 RTM_SETLINK]                  ; type
-                                     [:u16 (bit-or NLM_F_REQUEST NLM_F_ACK)] ; flags
-                                     [:u32 1]                            ; seq
-                                     [:u32 0]])]                         ; pid
+        ;; Build nlmsghdr (16 bytes)
+        nlmsg-len (+ 16 (count payload))
+        nlmsghdr (utils/pack-struct [[:u32 nlmsg-len]                        ; nlmsg_len
+                                     [:u16 RTM_SETLINK]                      ; nlmsg_type
+                                     [:u16 (bit-or NLM_F_REQUEST NLM_F_ACK)] ; nlmsg_flags
+                                     [:u32 1]                                ; nlmsg_seq
+                                     [:u32 0]])]                             ; nlmsg_pid
 
     (byte-array (concat nlmsghdr payload))))
 

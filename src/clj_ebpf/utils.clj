@@ -359,7 +359,11 @@
 
 (defn pack-struct
   "Pack a struct definition into bytes
-   Spec is a vector of [type value] pairs where type is :u8, :u16, :u32, :u64, :i8, :i16, :i32, :i64"
+   Spec is a vector of [type value] pairs where type is :u8, :u16, :u32, :u64, :i8, :i16, :i32, :i64
+
+   For unsigned types (:u32, :u16), values are treated as unsigned and the bit pattern
+   is preserved even for values that would overflow signed types. For example,
+   0xFFFF0000 is correctly packed as the bytes [0x00 0x00 0xFF 0xFF] in little-endian."
   [spec]
   (let [total-size (reduce (fn [acc [type _]]
                             (+ acc (case type
@@ -373,11 +377,13 @@
     (.order bb ByteOrder/LITTLE_ENDIAN)
     (doseq [[type value] spec]
       (case type
-        :u8 (.put bb (byte value))
+        :u8 (.put bb (unchecked-byte value))
         :i8 (.put bb (byte value))
-        :u16 (.putShort bb (short value))
+        :u16 (.putShort bb (unchecked-short value))
         :i16 (.putShort bb (short value))
-        :u32 (.putInt bb (int value))
+        ;; For :u32, use unchecked-int to preserve bit pattern for unsigned values
+        ;; like 0xFFFF0000 which would overflow a signed int
+        :u32 (.putInt bb (unchecked-int (bit-and (long value) 0xFFFFFFFF)))
         :i32 (.putInt bb (int value))
         :u64 (.putLong bb (long value))
         :i64 (.putLong bb (long value))))

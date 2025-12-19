@@ -23,7 +23,11 @@
 (def ^:private NLM_F_EXCL 0x200)
 (def ^:private NLMSG_ERROR 0x02)
 
-;; TC handles and priorities
+;; Netlink attribute flags
+(def ^:private NLA_F_NESTED 0x8000)
+
+;; TC handles and priorities (unsigned 32-bit values)
+;; These are defined as longs to avoid signed integer overflow
 (def ^:private TC_H_CLSACT 0xFFFF0000)
 (def ^:private TC_H_MIN_INGRESS 0xFFF2)
 (def ^:private TC_H_MIN_EGRESS 0xFFF3)
@@ -117,17 +121,41 @@
     (when (neg? error-code)
       (throw (ex-info "Netlink operation failed" {:errno (- error-code)})))))
 
+(defn- nla-align
+  "Align length to 4-byte boundary (NLA_ALIGN)"
+  [len]
+  (bit-and (+ len 3) (bit-not 3)))
+
+(defn- build-nla
+  "Build a netlink attribute (struct nlattr).
+
+  Parameters:
+  - nla-type: Attribute type (may include flags like NLA_F_NESTED)
+  - data: Payload data as byte sequence
+
+  Returns byte sequence with proper padding.
+  nla_len includes header (4 bytes) but NOT padding."
+  [nla-type data]
+  (let [nla-len (+ 4 (count data))           ; Header (4 bytes) + data
+        padded-len (nla-align nla-len)
+        padding (- padded-len nla-len)]
+    (concat (utils/pack-struct [[:u16 nla-len]
+                                [:u16 nla-type]])
+            data
+            (repeat padding 0))))
+
+;; Legacy alias for backward compatibility
 (defn- build-rtattr
-  "Build rtattr structure"
+  "Build rtattr structure (legacy alias for build-nla)"
   [rta-type data]
-  (let [rta-len (+ 4 (count data))]
-    (concat (utils/pack-struct [[:u16 rta-len] [:u16 rta-type]])
-            data)))
+  (build-nla rta-type data))
 
 (defn- align-4
   "Align data to 4-byte boundary"
   [data]
-  (let [padding (mod (- 4 (mod (count data) 4)) 4)]
+  (let [len (count data)
+        padded-len (nla-align len)
+        padding (- padded-len len)]
     (concat data (repeat padding 0))))
 
 ;; ============================================================================
@@ -241,47 +269,49 @@
   - nlmsghdr: {len, type, flags, seq, pid}
   - tcmsg: {family, ifindex, handle, parent, info}
   - rtattr for TCA_KIND (\"bpf\")
-  - rtattr for TCA_OPTIONS containing:
+  - rtattr for TCA_OPTIONS (nested) containing:
     - rtattr for TCA_BPF_FD
     - rtattr for TCA_BPF_NAME
     - rtattr for TCA_BPF_FLAGS"
   [msg-type ifindex direction prog-fd prog-name priority flags]
   (let [parent (get tc-direction direction TC_H_MIN_INGRESS)
 
-        ;; Build tcmsg structure
+        ;; Build tcmsg structure (20 bytes)
         ;; info field format: lower 16 bits = protocol (0x0003 = ETH_P_ALL), upper 16 bits = priority
-        info-field (unchecked-int (bit-or (bit-shift-left (int priority) 16) 0x0003))
-        tcmsg (utils/pack-struct [[:u8 0]               ; family = AF_UNSPEC
-                                  [:u8 0] [:u16 0]      ; padding
-                                  [:u32 ifindex]        ; ifindex
-                                  [:u32 0]              ; handle (0 = auto)
-                                  [:u32 (bit-or TC_H_CLSACT parent)] ; parent
-                                  [:u32 info-field]]); info (prio << 16 | ETH_P_ALL)
+        info-field (bit-or (bit-shift-left (long priority) 16) 0x0003)
+        tcmsg (utils/pack-struct [[:u8 0]                              ; family = AF_UNSPEC
+                                  [:u8 0] [:u16 0]                     ; padding
+                                  [:u32 ifindex]                       ; ifindex
+                                  [:u32 0]                             ; handle (0 = auto)
+                                  [:u32 (bit-or TC_H_CLSACT parent)]   ; parent
+                                  [:u32 info-field]])                  ; info (prio << 16 | ETH_P_ALL)
 
-        ;; Build TCA_KIND attribute with "bpf"
+        ;; Build TCA_KIND attribute with "bpf" (null-terminated, aligned)
         kind-data (concat (.getBytes "bpf" "UTF-8") [0])
-        kind-attr (build-rtattr TCA_KIND (align-4 kind-data))
+        kind-attr (build-nla TCA_KIND (align-4 kind-data))
 
-        ;; Build BPF options
-        bpf-fd-attr (build-rtattr TCA_BPF_FD (utils/pack-struct [[:u32 prog-fd]]))
+        ;; Build inner BPF option attributes
+        bpf-fd-attr (build-nla TCA_BPF_FD (utils/pack-struct [[:u32 prog-fd]]))
         bpf-name-data (concat (.getBytes prog-name "UTF-8") [0])
-        bpf-name-attr (build-rtattr TCA_BPF_NAME (align-4 bpf-name-data))
-        bpf-flags-attr (build-rtattr TCA_BPF_FLAGS (utils/pack-struct [[:u32 TCA_BPF_FLAG_ACT_DIRECT]]))
+        bpf-name-attr (build-nla TCA_BPF_NAME (align-4 bpf-name-data))
+        bpf-flags-attr (build-nla TCA_BPF_FLAGS (utils/pack-struct [[:u32 TCA_BPF_FLAG_ACT_DIRECT]]))
 
-        ;; Combine BPF options
-        bpf-options (align-4 (concat bpf-fd-attr bpf-name-attr bpf-flags-attr))
-        options-attr (build-rtattr TCA_OPTIONS bpf-options)
+        ;; Combine BPF options (already individually aligned by build-nla)
+        bpf-options (vec (concat bpf-fd-attr bpf-name-attr bpf-flags-attr))
+
+        ;; Build TCA_OPTIONS with NLA_F_NESTED flag
+        options-attr (build-nla (bit-or TCA_OPTIONS NLA_F_NESTED) bpf-options)
 
         ;; Combine tcmsg + attributes
         payload (concat tcmsg kind-attr options-attr)
 
-        ;; Build nlmsghdr
+        ;; Build nlmsghdr (16 bytes)
         nlmsg-len (+ 16 (count payload))
-        nlmsghdr (utils/pack-struct [[:u32 nlmsg-len]
-                                     [:u16 msg-type]
-                                     [:u16 flags]
-                                     [:u32 1]
-                                     [:u32 0]])]
+        nlmsghdr (utils/pack-struct [[:u32 nlmsg-len]      ; nlmsg_len
+                                     [:u16 msg-type]       ; nlmsg_type
+                                     [:u16 flags]          ; nlmsg_flags
+                                     [:u32 1]              ; nlmsg_seq
+                                     [:u32 0]])]           ; nlmsg_pid
 
     (byte-array (concat nlmsghdr payload))))
 

@@ -70,6 +70,76 @@
       ;; Message should have at least nlmsghdr + tcmsg + attributes
       (is (>= (count msg) 50)))))
 
+(deftest test-nla-align
+  (testing "NLA alignment to 4-byte boundary"
+    (is (= 0 (#'tc/nla-align 0)))
+    (is (= 4 (#'tc/nla-align 1)))
+    (is (= 4 (#'tc/nla-align 2)))
+    (is (= 4 (#'tc/nla-align 3)))
+    (is (= 4 (#'tc/nla-align 4)))
+    (is (= 8 (#'tc/nla-align 5)))
+    (is (= 8 (#'tc/nla-align 6)))
+    (is (= 8 (#'tc/nla-align 7)))
+    (is (= 8 (#'tc/nla-align 8)))
+    (is (= 12 (#'tc/nla-align 9)))))
+
+(deftest test-build-nla
+  (testing "Build NLA with 4-byte payload (no padding needed)"
+    (let [data [0x01 0x02 0x03 0x04]
+          result (vec (#'tc/build-nla 1 data))]
+      ;; Header (4 bytes) + data (4 bytes) = 8 bytes (already aligned)
+      (is (= 8 (count result)))
+      ;; nla_len should be 8 (includes header)
+      (is (= 8 (bit-or (bit-and (nth result 0) 0xFF)
+                       (bit-shift-left (bit-and (nth result 1) 0xFF) 8))))
+      ;; nla_type should be 1
+      (is (= 1 (bit-or (bit-and (nth result 2) 0xFF)
+                       (bit-shift-left (bit-and (nth result 3) 0xFF) 8))))))
+
+  (testing "Build NLA with 3-byte payload (needs 1 byte padding)"
+    (let [data [0x01 0x02 0x03]
+          result (vec (#'tc/build-nla 2 data))]
+      ;; Header (4 bytes) + data (3 bytes) + padding (1 byte) = 8 bytes
+      (is (= 8 (count result)))
+      ;; nla_len should be 7 (header + data, NOT including padding)
+      (is (= 7 (bit-or (bit-and (nth result 0) 0xFF)
+                       (bit-shift-left (bit-and (nth result 1) 0xFF) 8))))
+      ;; Last byte should be padding (0)
+      (is (= 0 (nth result 7)))))
+
+  (testing "Build NLA with NLA_F_NESTED flag"
+    (let [nla-f-nested 0x8000
+          nla-type (bit-or 2 nla-f-nested)
+          data [0x01 0x02 0x03 0x04]
+          result (vec (#'tc/build-nla nla-type data))]
+      ;; nla_type should have nested flag set
+      (let [type-bytes (bit-or (bit-and (nth result 2) 0xFF)
+                               (bit-shift-left (bit-and (nth result 3) 0xFF) 8))]
+        (is (not= 0 (bit-and type-bytes nla-f-nested)))
+        (is (= 2 (bit-and type-bytes 0x7FFF)))))))
+
+(deftest test-tc-handles-in-messages
+  (testing "TC handles with large unsigned values in qdisc message"
+    ;; This test verifies that TC_H_CLSACT (0xFFFF0000) is correctly
+    ;; packed without integer overflow
+    (let [msg (#'tc/build-qdisc-msg 36 1 0x05)]
+      (is (instance? (Class/forName "[B") msg))
+      ;; Message should build successfully without throwing
+      (is (> (count msg) 0))))
+
+  (testing "TC combined handle in filter message"
+    ;; TC_H_CLSACT | TC_H_MIN_INGRESS = 0xFFFFFFF2
+    ;; This should not throw integer overflow
+    (let [msg (#'tc/build-filter-msg 44 1 :ingress 5 "test" 1 0x05)]
+      (is (instance? (Class/forName "[B") msg))
+      (is (> (count msg) 0))))
+
+  (testing "TC combined handle with egress"
+    ;; TC_H_CLSACT | TC_H_MIN_EGRESS = 0xFFFFFFF3
+    (let [msg (#'tc/build-filter-msg 44 1 :egress 5 "test" 1 0x05)]
+      (is (instance? (Class/forName "[B") msg))
+      (is (> (count msg) 0)))))
+
 ;; ============================================================================
 ;; TC Program Type Tests
 ;; ============================================================================
