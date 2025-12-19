@@ -189,14 +189,17 @@
 
 (defn xdp-load-data-ptrs
   "Load data and data_end pointers from XDP context.
-   XDP md: data at offset 0, data_end at offset 8 (64-bit pointers).
+   XDP md structure:
+     __u32 data;        // offset 0
+     __u32 data_end;    // offset 4
+     __u32 data_meta;   // offset 8
 
    data-reg: Register to store data pointer
    data-end-reg: Register to store data_end pointer
    ctx-reg: XDP context register (typically :r1)"
   [data-reg data-end-reg ctx-reg]
-  [(dsl/ldx :dw data-reg ctx-reg 0)
-   (dsl/ldx :dw data-end-reg ctx-reg 8)])
+  [(dsl/ldx :w data-reg ctx-reg 0)
+   (dsl/ldx :w data-end-reg ctx-reg 4)])
 
 (defn tc-load-data-ptrs
   "Load data and data_end pointers from TC/SKB context.
