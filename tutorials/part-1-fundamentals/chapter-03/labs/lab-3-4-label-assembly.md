@@ -354,6 +354,20 @@ Build an XDP program that:
 2. Uses labels for each protocol handler
 3. Passes all packets (just identifies them)
 
+### Solutions
+
+See [lab_3_4_solutions.clj](lab_3_4_solutions.clj) for complete solutions to all exercises.
+
+Run solutions with:
+```bash
+clojure -Sdeps '{:paths ["src" "tutorials/part-1-fundamentals/chapter-03/labs"]}' \
+  -M -m lab-3-4-solutions
+
+# With XDP program loading (requires root):
+sudo clojure -Sdeps '{:paths ["src" "tutorials/part-1-fundamentals/chapter-03/labs"]}' \
+  -M -m lab-3-4-solutions --run
+```
+
 ## Key Takeaways
 
 1. **Labels eliminate offset errors**: No more manual counting
@@ -370,6 +384,7 @@ Build an XDP program that:
 
 ## Reference
 
+- [Exercise solutions](lab_3_4_solutions.clj)
 - [clj-ebpf.asm namespace](../../../../src/clj_ebpf/asm.clj)
 - [Label examples](../../../../examples/asm_labels.clj)
 - [XDP DSL](../../../../src/clj_ebpf/dsl/xdp.clj)
