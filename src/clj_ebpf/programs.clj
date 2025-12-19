@@ -157,31 +157,64 @@
                         :cause e}))))))
 
 (defn attach-kprobe
-  "Attach BPF program to a kprobe using modern BPF_LINK_CREATE
+  "Attach BPF program to a kprobe using perf events
+
+  This uses the tracefs-based approach which is widely compatible:
+  1. Creates a kprobe event in /sys/kernel/debug/tracing/kprobe_events
+  2. Opens a perf event for that tracepoint
+  3. Attaches the BPF program via PERF_EVENT_IOC_SET_BPF
 
   Options:
   - :function - Kernel function name to probe
-  - :retprobe? - If true, attach to function return (default: false)"
-  [^BpfProgram prog {:keys [function retprobe?]
-                     :or {retprobe? false}}]
-  (let [;; Use modern BPF_LINK_CREATE with kprobe_multi (kernel 5.5+)
-        link-fd (syscall/bpf-link-create-kprobe (:fd prog) function retprobe?)
+  - :retprobe? - If true, attach to function return (default: false)
+  - :pid - PID to attach to (default: -1 for all processes)
+  - :cpu - CPU to attach to (default: 0)"
+  [^BpfProgram prog {:keys [function retprobe? pid cpu]
+                     :or {retprobe? false pid -1 cpu 0}}]
+  (let [;; Generate unique event name
+        event-name (str (if retprobe? "kretp_" "kprobe_")
+                       (str/replace function #"[^a-zA-Z0-9_]" "_")
+                       "_" (System/currentTimeMillis))
+
+        ;; Create kprobe event in tracefs
+        _ (write-kprobe-event event-name function retprobe?)
+
+        ;; Get the event ID from tracefs
+        tracepoint-id (get-tracepoint-id "kprobes" event-name)
+        _ (log/debug "Kprobe event" event-name "has tracepoint ID:" tracepoint-id)
+
+        ;; Open perf event
+        event-fd (syscall/perf-event-open
+                   (const/perf-type :tracepoint)
+                   tracepoint-id
+                   pid
+                   cpu
+                   -1   ; group_fd
+                   0)   ; flags
+
+        ;; Attach BPF program
+        _ (syscall/ioctl event-fd (const/perf-event-ioc :set-bpf) (:fd prog))
+
+        ;; Enable the event
+        _ (syscall/ioctl event-fd (const/perf-event-ioc :enable))
 
         ;; Create detach function
         detach-fn (fn []
                    (try
-                     (syscall/close-fd link-fd)
+                     (syscall/ioctl event-fd (const/perf-event-ioc :disable))
                      (catch Exception e
-                       (log/warn "Failed to close BPF link:" e))))
+                       (log/warn "Failed to disable perf event:" e)))
+                   (syscall/close-fd event-fd)
+                   (remove-kprobe-event event-name))
 
         attachment (->ProgramAttachment
                      (if retprobe? :kretprobe :kprobe)
                      function
-                     link-fd
+                     event-fd
                      detach-fn)]
 
     (log/info "Attached" (if retprobe? "kretprobe" "kprobe")
-              "to" function "link-fd:" link-fd)
+              "to" function "event-fd:" event-fd)
 
     ;; Add attachment to program
     (update prog :attachments conj attachment)))
