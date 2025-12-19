@@ -1,6 +1,7 @@
 (ns clj-ebpf.tc
   "TC (Traffic Control) support for BPF packet filtering and QoS"
-  (:require [clj-ebpf.constants :as const]
+  (:require [clj-ebpf.arch :as arch]
+            [clj-ebpf.constants :as const]
             [clj-ebpf.syscall :as syscall]
             [clj-ebpf.utils :as utils]
             [clj-ebpf.programs :as programs]
@@ -75,38 +76,42 @@
 (def ^:private SOCK_RAW 3)
 
 (defn- socket
-  "Create a socket"
+  "Create a socket using architecture-correct syscall number"
   [domain type protocol]
-  (let [result (syscall/raw-syscall 41 domain type protocol)]
+  (let [socket-nr (arch/get-syscall-nr :socket)
+        result (syscall/raw-syscall socket-nr domain type protocol)]
     (when (neg? result)
       (throw (ex-info "Failed to create socket" {:errno (- result)})))
     result))
 
 (defn- bind-netlink
-  "Bind netlink socket"
+  "Bind netlink socket using architecture-correct syscall number"
   [sock-fd]
-  (let [addr (utils/pack-struct [[:u16 AF_NETLINK]
+  (let [bind-nr (arch/get-syscall-nr :bind)
+        addr (utils/pack-struct [[:u16 AF_NETLINK]
                                   [:u16 0]
                                   [:u32 0]
                                   [:u32 0]])
-        addr-seg (utils/bytes->segment addr)]
-    (let [result (syscall/raw-syscall 49 sock-fd addr-seg 12)]
-      (when (neg? result)
-        (throw (ex-info "Failed to bind netlink socket" {:errno (- result)}))))))
+        addr-seg (utils/bytes->segment addr)
+        result (syscall/raw-syscall bind-nr sock-fd addr-seg 12)]
+    (when (neg? result)
+      (throw (ex-info "Failed to bind netlink socket" {:errno (- result)})))))
 
 (defn- send-netlink
-  "Send netlink message"
+  "Send netlink message using architecture-correct syscall number"
   [sock-fd msg-bytes]
-  (let [msg-seg (utils/bytes->segment msg-bytes)
-        result (syscall/raw-syscall 44 sock-fd msg-seg (count msg-bytes) 0)]
+  (let [sendto-nr (arch/get-syscall-nr :sendto)
+        msg-seg (utils/bytes->segment msg-bytes)
+        result (syscall/raw-syscall sendto-nr sock-fd msg-seg (count msg-bytes) 0)]
     (when (neg? result)
       (throw (ex-info "Failed to send netlink message" {:errno (- result)})))))
 
 (defn- recv-netlink
-  "Receive netlink message"
+  "Receive netlink message using architecture-correct syscall number"
   [sock-fd buf-size]
-  (let [buf-seg (utils/allocate-memory buf-size)
-        result (syscall/raw-syscall 45 sock-fd buf-seg buf-size 0)]
+  (let [recvfrom-nr (arch/get-syscall-nr :recvfrom)
+        buf-seg (utils/allocate-memory buf-size)
+        result (syscall/raw-syscall recvfrom-nr sock-fd buf-seg buf-size 0)]
     (when (neg? result)
       (throw (ex-info "Failed to receive netlink message" {:errno (- result)})))
     (utils/segment->bytes buf-seg result)))
