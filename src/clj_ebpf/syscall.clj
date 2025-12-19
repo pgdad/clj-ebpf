@@ -260,6 +260,12 @@
       (.set mem C_INT 68 (:expected-attach-type attr)))
     (when (:prog-btf-fd attr)
       (.set mem C_INT 72 (:prog-btf-fd attr)))
+    ;; attach_btf_id is at offset 108 in bpf_attr
+    (when (:attach-btf-id attr)
+      (.set mem C_INT 108 (:attach-btf-id attr)))
+    ;; attach_prog_fd / attach_btf_obj_fd is at offset 112
+    (when (:attach-prog-fd attr)
+      (.set mem C_INT 112 (:attach-prog-fd attr)))
     mem))
 
 (defrecord ObjPinAttr
@@ -694,6 +700,194 @@
         (do
           (log/info "Created BPF link for" (if retprobe? "kretprobe" "kprobe")
                     "on" function-name "link-fd:" result)
+          result)))))
+
+;; ============================================================================
+;; BTF (BPF Type Format) Support
+;; ============================================================================
+
+;; BTF type kinds (from include/uapi/linux/btf.h)
+(def ^:private btf-kinds
+  {:void 0
+   :int 1
+   :ptr 2
+   :array 3
+   :struct 4
+   :union 5
+   :enum 6
+   :fwd 7
+   :typedef 8
+   :volatile 9
+   :const 10
+   :restrict 11
+   :func 12        ; Function - what we look for
+   :func-proto 13
+   :var 14
+   :datasec 15
+   :float 16
+   :decl-tag 17
+   :type-tag 18
+   :enum64 19})
+
+(defn- btf-info-kind
+  "Extract kind from BTF info field"
+  [info]
+  (bit-and (bit-shift-right info 24) 0x1f))
+
+(defn- btf-info-vlen
+  "Extract vlen from BTF info field"
+  [info]
+  (bit-and info 0xffff))
+
+(defn parse-btf-vmlinux
+  "Parse vmlinux BTF to find function type ID by name.
+   Returns the BTF type ID (1-based) or nil if not found."
+  [func-name]
+  (let [btf-path "/sys/kernel/btf/vmlinux"
+        btf-bytes (java.nio.file.Files/readAllBytes
+                    (java.nio.file.Paths/get btf-path (into-array String [])))
+        btf-len (alength btf-bytes)
+        buf (java.nio.ByteBuffer/wrap btf-bytes)]
+    ;; Set to little-endian
+    (.order buf java.nio.ByteOrder/LITTLE_ENDIAN)
+
+    ;; Parse BTF header (struct btf_header)
+    ;; magic: u16 (0xEB9F)
+    ;; version: u8
+    ;; flags: u8
+    ;; hdr_len: u32
+    ;; type_off: u32
+    ;; type_len: u32
+    ;; str_off: u32
+    ;; str_len: u32
+    (let [magic (.getShort buf)
+          version (.get buf)
+          flags (.get buf)
+          hdr-len (.getInt buf)
+          type-off (.getInt buf)
+          type-len (.getInt buf)
+          str-off (.getInt buf)
+          str-len (.getInt buf)]
+
+      (when-not (= (bit-and magic 0xFFFF) 0xEB9F)
+        (throw (ex-info "Invalid BTF magic" {:magic magic})))
+
+      (log/debug "BTF header: version=" version "hdr_len=" hdr-len
+                 "type_off=" type-off "type_len=" type-len
+                 "str_off=" str-off "str_len=" str-len)
+
+      ;; Helper to read string from string section
+      (let [read-string (fn [name-off]
+                         (when (and (>= name-off 0) (< name-off str-len))
+                           (let [start (+ hdr-len str-off name-off)
+                                 sb (StringBuilder.)]
+                             (loop [i start]
+                               (when (< i btf-len)
+                                 (let [b (aget btf-bytes i)]
+                                   (if (zero? b)
+                                     (str sb)
+                                     (do
+                                       (.append sb (char (bit-and b 0xFF)))
+                                       (recur (inc i))))))))))
+            ;; Scan types looking for FUNC with matching name
+            type-start (+ hdr-len type-off)
+            type-end (+ type-start type-len)]
+
+        ;; Iterate through BTF types
+        ;; Each type has: name_off (u32), info (u32), size/type (u32)
+        ;; followed by kind-specific data
+        (loop [pos type-start
+               type-id 1]  ; BTF type IDs are 1-based
+          (if (>= pos type-end)
+            nil  ; Not found
+            (let [_ (.position buf pos)
+                  name-off (.getInt buf)
+                  info (.getInt buf)
+                  size-or-type (.getInt buf)
+                  kind (btf-info-kind info)
+                  vlen (btf-info-vlen info)]
+
+              ;; Calculate size of this type entry
+              (let [extra-size (case kind
+                                 ;; BTF_KIND_INT: 4 bytes extra
+                                 1 4
+                                 ;; BTF_KIND_ARRAY: 12 bytes extra
+                                 3 12
+                                 ;; BTF_KIND_STRUCT/UNION: vlen * 12 bytes
+                                 (4 5) (* vlen 12)
+                                 ;; BTF_KIND_ENUM: vlen * 8 bytes
+                                 6 (* vlen 8)
+                                 ;; BTF_KIND_FUNC_PROTO: vlen * 8 bytes
+                                 13 (* vlen 8)
+                                 ;; BTF_KIND_VAR: 4 bytes
+                                 14 4
+                                 ;; BTF_KIND_DATASEC: vlen * 12 bytes
+                                 15 (* vlen 12)
+                                 ;; BTF_KIND_DECL_TAG: 4 bytes
+                                 17 4
+                                 ;; BTF_KIND_ENUM64: vlen * 12 bytes
+                                 19 (* vlen 12)
+                                 ;; Default: no extra data
+                                 0)
+                    next-pos (+ pos 12 extra-size)]
+
+                ;; Check if this is a FUNC with matching name
+                (if (and (= kind (:func btf-kinds))
+                        (let [type-name (read-string name-off)]
+                          (= type-name func-name)))
+                  (do
+                    (log/debug "Found BTF func" func-name "at type_id" type-id)
+                    type-id)
+                  (recur next-pos (inc type-id)))))))))))
+
+(defn bpf-link-create-fentry
+  "Create a BPF link for fentry/fexit using BPF_LINK_CREATE
+   attach-type should be :trace-fentry or :trace-fexit
+   Returns link FD
+
+   Note: For programs loaded with attach_btf_id set (via load-fentry-program),
+   target_fd and target_btf_id should both be 0. The kernel uses the BTF ID
+   that was set during program load."
+  [prog-fd btf-id attach-type]
+  (let [attr-mem (allocate-zeroed 128)
+        attach-type-num (const/attach-type->num attach-type)]
+
+    ;; Build bpf_attr for BPF_LINK_CREATE with tracing
+    ;; struct bpf_attr for BPF_LINK_CREATE:
+    ;;   prog_fd (offset 0, u32)
+    ;;   target_fd (offset 4, u32) - 0 for vmlinux
+    ;;   attach_type (offset 8, u32)
+    ;;   flags (offset 12, u32)
+    ;;   target_btf_id (offset 16, u32) - 0 if program was loaded with attach_btf_id
+
+    ;; prog_fd (offset 0)
+    (.set attr-mem C_INT 0 (int prog-fd))
+    ;; target_fd (offset 4) - 0 for tracing programs
+    (.set attr-mem C_INT 4 (int 0))
+    ;; attach_type (offset 8)
+    (.set attr-mem C_INT 8 (int attach-type-num))
+    ;; flags (offset 12)
+    (.set attr-mem C_INT 12 (int 0))
+    ;; target_btf_id (offset 16) - 0 because program was loaded with attach_btf_id
+    (.set attr-mem C_INT 16 (int 0))
+
+    (log/debug "BPF_LINK_CREATE fentry/fexit:"
+               "\n  prog_fd:" prog-fd
+               "\n  attach_type:" attach-type attach-type-num
+               "\n  target_btf_id: 0 (btf_id was set at load time:" btf-id ")")
+
+    (let [result (int (bpf-syscall :link-create attr-mem))]
+      (if (< result 0)
+        (let [errno (get-errno)
+              errno-kw (errno->keyword errno)]
+          (log/error "BPF_LINK_CREATE failed for fentry/fexit, errno:" errno errno-kw)
+          (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                          {:errno errno
+                           :errno-keyword errno-kw
+                           :attach-type attach-type
+                           :btf-id btf-id})))
+        (do
+          (log/info "Created BPF link for" attach-type "btf-id:" btf-id "link-fd:" result)
           result)))))
 
 ;; Close file descriptor

@@ -31,16 +31,17 @@
   "Load a BPF program into the kernel
 
   Options:
-  - :prog-type - Program type (:kprobe, :tracepoint, :xdp, etc.)
+  - :prog-type - Program type (:kprobe, :tracepoint, :xdp, :tracing, etc.)
   - :insns - BPF instructions as byte array or pointer
   - :insn-count - Number of instructions (auto-calculated if insns is byte array)
   - :license - License string (e.g., 'GPL')
   - :prog-name - Optional program name
   - :log-level - Verifier log level (0=off, 1=basic, 2=verbose)
   - :kern-version - Kernel version (default: current kernel)
-  - :expected-attach-type - Expected attach type for certain prog types"
+  - :expected-attach-type - Expected attach type for certain prog types
+  - :attach-btf-id - BTF type ID for fentry/fexit programs"
   [{:keys [prog-type insns insn-count license prog-name log-level kern-version
-           prog-flags expected-attach-type prog-btf-fd]
+           prog-flags expected-attach-type prog-btf-fd attach-btf-id]
     :or {log-level 1
          license "GPL"
          kern-version (utils/get-kernel-version)
@@ -74,7 +75,8 @@
                 :prog-name prog-name
                 :expected-attach-type (when expected-attach-type
                                        (const/attach-type->num expected-attach-type))
-                :prog-btf-fd prog-btf-fd})
+                :prog-btf-fd prog-btf-fd
+                :attach-btf-id attach-btf-id})
              (catch clojure.lang.ExceptionInfo e
                ;; Extract verifier log
                (let [log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)]
@@ -353,6 +355,133 @@
   "Attach BPF program to a uretprobe (function return probe)"
   [^BpfProgram prog options]
   (attach-uprobe prog (assoc options :retprobe? true)))
+
+;; Fentry/Fexit attachment
+
+(defn load-fentry-program
+  "Load a BPF program for fentry/fexit attachment.
+
+  Fentry/fexit programs require special loading with:
+  - prog-type: :tracing
+  - expected-attach-type: :trace-fentry or :trace-fexit
+  - attach-btf-id: BTF type ID of the target function
+
+  Options:
+  - :insns - BPF bytecode
+  - :function - Kernel function name to attach to
+  - :fexit? - If true, load as fexit (default: false for fentry)
+  - :prog-name - Optional program name
+  - :license - License string (default: 'GPL')
+  - :log-level - Verifier log level (default: 1)
+
+  Returns a BpfProgram record with :btf-id in metadata."
+  [{:keys [insns function fexit? prog-name license log-level]
+    :or {fexit? false license "GPL" log-level 1}}]
+  (let [;; Find BTF ID for the target function
+        btf-id (syscall/parse-btf-vmlinux function)
+        _ (when-not btf-id
+            (throw (ex-info "Function not found in kernel BTF"
+                           {:function function})))
+
+        ;; Load the program with tracing type and BTF ID
+        prog (load-program {:insns insns
+                           :prog-type :tracing
+                           :expected-attach-type (if fexit? :trace-fexit :trace-fentry)
+                           :prog-name (or prog-name (str (if fexit? "fexit_" "fentry_") function))
+                           :license license
+                           :log-level log-level
+                           :attach-btf-id btf-id})]
+    ;; Store BTF ID for later use in attachment
+    (assoc prog :btf-id btf-id :target-function function)))
+
+(defn attach-fentry
+  "Attach BPF program to a kernel function entry point using fentry.
+
+  Fentry is a modern, efficient alternative to kprobes that uses BTF
+  (BPF Type Format) for type-safe function argument access.
+
+  There are two ways to use this:
+
+  1. Load program separately, then attach:
+     (let [prog (load-fentry-program {:insns bytecode
+                                      :function \"tcp_v4_connect\"})]
+       (attach-fentry prog {}))
+
+  2. Or provide the function name if not already set:
+     (attach-fentry prog {:function \"tcp_v4_connect\"})
+
+  Options:
+  - :function - Kernel function name (optional if program was loaded with load-fentry-program)
+
+  Requirements:
+  - Kernel 5.5+ with BTF support
+  - Program must be loaded with :prog-type :tracing"
+  [^BpfProgram prog {:keys [function] :as opts}]
+  (let [;; Get BTF ID either from stored metadata or by looking up function
+        btf-id (or (:btf-id prog)
+                  (when function
+                    (syscall/parse-btf-vmlinux function))
+                  (throw (ex-info "No BTF ID or function specified"
+                                 {:prog prog :opts opts})))
+        target-fn (or (:target-function prog) function)
+
+        ;; Create the BPF link
+        link-fd (syscall/bpf-link-create-fentry (:fd prog) btf-id :trace-fentry)
+
+        ;; Create detach function
+        detach-fn (fn []
+                   (try
+                     (syscall/close-fd link-fd)
+                     (catch Exception e
+                       (log/warn "Failed to close BPF link:" e))))
+
+        attachment (->ProgramAttachment
+                     :fentry
+                     target-fn
+                     link-fd
+                     detach-fn)]
+
+    (log/info "Attached fentry to" target-fn "link-fd:" link-fd)
+
+    ;; Add attachment to program
+    (update prog :attachments conj attachment)))
+
+(defn attach-fexit
+  "Attach BPF program to a kernel function exit point using fexit.
+
+  Fexit is similar to fentry but triggers when the function returns,
+  allowing access to the return value.
+
+  See attach-fentry for usage details."
+  [^BpfProgram prog {:keys [function] :as opts}]
+  (let [;; Get BTF ID either from stored metadata or by looking up function
+        btf-id (or (:btf-id prog)
+                  (when function
+                    (syscall/parse-btf-vmlinux function))
+                  (throw (ex-info "No BTF ID or function specified"
+                                 {:prog prog :opts opts})))
+        target-fn (or (:target-function prog) function)
+
+        ;; Create the BPF link
+        link-fd (syscall/bpf-link-create-fentry (:fd prog) btf-id :trace-fexit)
+
+        ;; Create detach function
+        detach-fn (fn []
+                   (try
+                     (syscall/close-fd link-fd)
+                     (catch Exception e
+                       (log/warn "Failed to close BPF link:" e))))
+
+        attachment (->ProgramAttachment
+                     :fexit
+                     target-fn
+                     link-fd
+                     detach-fn)]
+
+    (log/info "Attached fexit to" target-fn "link-fd:" link-fd)
+
+    ;; Add attachment to program
+    (update prog :attachments conj attachment)))
 
 ;; Tracepoint attachment
 
