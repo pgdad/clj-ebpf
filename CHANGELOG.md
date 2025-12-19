@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed - Migrated to Panama FFI
 - **BREAKING**: Migrated from JNA to Java's Panama Foreign Function & Memory API
-- Requires Java 21+ (previously Java 11+)
+- Requires Java 25+ (previously Java 11+)
 - **Zero external dependencies** - removed JNA dependency entirely
 - Uses MemorySegment instead of JNA Pointer/Memory
 - More efficient native memory management with automatic cleanup
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added - Initial MVP Release
 
 #### Core Infrastructure
-- Direct `bpf()` syscall interface using Panama FFI (Java 21+)
+- Direct `bpf()` syscall interface using Panama FFI (Java 25+)
 - Complete BPF constants and enumerations from `linux/bpf.h`
 - Memory management utilities for native interactions
 - Kernel version detection and compatibility checking
@@ -98,7 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 - Clojure 1.12.0
 - tools.logging 1.3.0
-- Java 21+ (for Panama FFI)
+- Java 25+ (for Panama FFI)
 - **Zero external dependencies!**
 
 ### System Requirements

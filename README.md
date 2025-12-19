@@ -9,7 +9,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 ## Features
 
 ### Current (MVP)
-- ✅ Direct `bpf()` syscall interface using Panama FFI (Java 21+)
+- ✅ Direct `bpf()` syscall interface using Panama FFI (Java 25+)
 - ✅ BPF map operations (create, lookup, update, delete, iterate)
   - Hash maps
   - Array maps
@@ -113,7 +113,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 
 ### Dependencies
 - **Clojure**: 1.12.0+
-- **Java**: 21+ (required for Panama FFI)
+- **Java**: 25+ (required for Panama FFI)
 - **Zero external dependencies!** Uses Java's built-in Panama FFI
 
 ### Mounting Required Filesystems
@@ -1913,7 +1913,7 @@ clj-ebpf uses a layered architecture:
 ### Why Direct Syscalls?
 
 We use direct `bpf()` syscalls via Panama FFI instead of wrapping libbpf because:
-- **Zero dependencies**: Uses Java's built-in Panama FFI (Java 21+)
+- **Zero dependencies**: Uses Java's built-in Panama FFI (Java 25+)
 - **Full control**: Access to all BPF features
 - **No C compilation**: Pure Clojure + Java interop
 - **Better errors**: Direct access to kernel errors and verifier logs

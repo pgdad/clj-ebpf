@@ -3,7 +3,7 @@
 #
 # This configures the VM with:
 # - Ubuntu user with sudo access
-# - Java 21 (required for Panama FFI)
+# - Java 25 (required for Panama FFI)
 # - Clojure CLI tools
 # - SSH access for remote test execution
 
@@ -21,8 +21,8 @@ package_update: true
 package_upgrade: true
 
 packages:
-  # Java 21 for Panama FFI
-  - openjdk-21-jdk
+  # Java 25 for Panama FFI
+  - openjdk-25-jdk
   # Build tools
   - curl
   - wget
@@ -43,8 +43,8 @@ runcmd:
   - chmod +x linux-install.sh
   - ./linux-install.sh
   - rm linux-install.sh
-  # Set Java 21 as default
-  - update-alternatives --set java /usr/lib/jvm/java-21-openjdk-arm64/bin/java
+  # Set Java 25 as default
+  - update-alternatives --set java /usr/lib/jvm/java-25-openjdk-arm64/bin/java
   # Create workspace directory
   - mkdir -p /home/ubuntu/clj-ebpf
   - chown -R ubuntu:ubuntu /home/ubuntu/clj-ebpf

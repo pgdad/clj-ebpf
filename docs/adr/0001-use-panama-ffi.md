@@ -10,7 +10,7 @@ clj-ebpf needs to make Linux syscalls to interact with the BPF subsystem. Tradit
 
 1. **JNI (Java Native Interface)** - Requires compiling C code, platform-specific binaries
 2. **JNA (Java Native Access)** - Runtime library, slower than JNI
-3. **Panama FFI (Foreign Function & Memory API)** - Java 21+ standard API
+3. **Panama FFI (Foreign Function & Memory API)** - Java 25+ standard API
 
 We needed a solution that:
 - Works across architectures (x86_64, aarch64, riscv64)
@@ -34,8 +34,8 @@ We chose to use Java Panama FFI (Project Panama's Foreign Function & Memory API)
 
 ### Negative
 
-- **Java 21+ required**: Users must use Java 21 or later (now Java 25+ for full support)
-- **API changes**: Panama was in preview before Java 21; we track stable APIs
+- **Java 25+ required**: Users must use Java 25 or later for full support
+- **API changes**: Panama was in preview before Java 21; we use the stable API from Java 25
 - **Learning curve**: Panama has its own idioms for memory management
 
 ### Mitigations

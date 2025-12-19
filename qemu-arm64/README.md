@@ -35,7 +35,7 @@ This will:
 ```
 
 First boot takes 2-3 minutes for cloud-init to:
-- Install Java 21
+- Install Java 25
 - Install Clojure CLI
 - Configure SSH access
 
@@ -93,7 +93,7 @@ clojure -M:test-ci        # CI-safe tests only
 | Disk | 20GB |
 | OS | Ubuntu 22.04 |
 | Kernel | 5.15+ (Ubuntu default) |
-| Java | OpenJDK 21 |
+| Java | OpenJDK 25 |
 | SSH Port | 2222 |
 
 ## Cloud-Init Configuration
@@ -101,7 +101,7 @@ clojure -M:test-ci        # CI-safe tests only
 The VM is provisioned with `cloud-init/user-data`:
 - User: `ubuntu` (passwordless sudo)
 - SSH key: Your `~/.ssh/id_rsa.pub`
-- Packages: Java 21, Clojure, git, bpftool
+- Packages: Java 25, Clojure, git, bpftool
 
 ## Directory Structure
 

@@ -9,7 +9,7 @@ This document describes how to publish clj-ebpf to [Clojars](https://clojars.org
    - Log in to Clojars
    - Go to your profile → Settings → Deploy Tokens
    - Create a new token with appropriate permissions
-3. **Java 21+**: Required for building and running clj-ebpf
+3. **Java 25+**: Required for building and running clj-ebpf
 4. **Clojure CLI**: Install from https://clojure.org/guides/install_clojure
 
 ## Setup

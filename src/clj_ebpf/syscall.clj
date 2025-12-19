@@ -1,5 +1,5 @@
 (ns clj-ebpf.syscall
-  "Low-level BPF syscall interface using Java Panama FFI (Java 21+)"
+  "Low-level BPF syscall interface using Java Panama FFI (Java 25+)"
   (:require [clj-ebpf.arch :as arch]
             [clj-ebpf.constants :as const]
             [clojure.tools.logging :as log])

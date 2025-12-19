@@ -840,7 +840,7 @@ Options considered:
 3. Panama FFI (Foreign Function & Memory API)
 
 ## Decision
-Use Panama FFI (Java 21+) for all native interactions.
+Use Panama FFI (Java 25+) for all native interactions.
 
 ## Consequences
 ### Positive
@@ -850,7 +850,7 @@ Use Panama FFI (Java 21+) for all native interactions.
 - Type-safe foreign function calls
 
 ### Negative
-- Requires Java 21+
+- Requires Java 25+
 - Panama API still evolving
 - Less community examples compared to JNI
 

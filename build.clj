@@ -49,7 +49,7 @@
                       :connection "scm:git:git://github.com/pgdad/clj-ebpf.git"
                       :developerConnection "scm:git:ssh://git@github.com/pgdad/clj-ebpf.git"
                       :tag (str "v" version)}
-                :pom-data [[:description "A Clojure DSL for eBPF programming using Java 21+ Panama FFI"]
+                :pom-data [[:description "A Clojure DSL for eBPF programming using Java 25+ Panama FFI"]
                            [:url "https://github.com/pgdad/clj-ebpf"]
                            [:licenses
                             [:license
