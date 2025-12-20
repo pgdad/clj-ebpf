@@ -291,8 +291,9 @@
   (let [parent (get tc-direction direction TC_H_MIN_INGRESS)
 
         ;; Build tcmsg structure (20 bytes)
-        ;; info field format: lower 16 bits = protocol (0x0003 = ETH_P_ALL), upper 16 bits = priority
-        info-field (bit-or (bit-shift-left (long priority) 16) 0x0003)
+        ;; info field format: lower 16 bits = protocol (in network byte order), upper 16 bits = priority
+        ;; ETH_P_IP = 0x0800, in network byte order = 0x0008 (8) for IPv4 traffic
+        info-field (bit-or (bit-shift-left (long priority) 16) 0x0008)
         tcmsg (utils/pack-struct [[:u8 0]                              ; family = AF_UNSPEC
                                   [:u8 0] [:u16 0]                     ; padding
                                   [:u32 ifindex]                       ; ifindex
