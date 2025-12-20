@@ -141,6 +141,68 @@
       (is (> (count msg) 0)))))
 
 ;; ============================================================================
+;; TC Protocol Field Tests (ETH_P_IP fix verification)
+;; ============================================================================
+
+(defn- extract-info-field
+  "Extract the info field from a filter message.
+   Filter message structure:
+   - nlmsghdr: 16 bytes
+   - tcmsg: 20 bytes (family, pad, ifindex, handle, parent, info)
+   - info is at offset 32 (16 + 16) in the message, 4 bytes"
+  [msg]
+  (let [b (byte-array msg)
+        ;; info field is at offset 32 in the message (16 byte nlmsghdr + 16 bytes of tcmsg before info)
+        ;; Actually: nlmsghdr (16) + family(1) + pad(3) + ifindex(4) + handle(4) + parent(4) = offset 32
+        ;; Then info is 4 bytes at offset 32
+        offset 32]
+    (bit-or (bit-and (aget b offset) 0xFF)
+            (bit-shift-left (bit-and (aget b (+ offset 1)) 0xFF) 8)
+            (bit-shift-left (bit-and (aget b (+ offset 2)) 0xFF) 16)
+            (bit-shift-left (bit-and (aget b (+ offset 3)) 0xFF) 24))))
+
+(deftest test-filter-protocol-eth-p-ip
+  (testing "Filter message uses ETH_P_IP (0x0008 in network byte order) for IPv4"
+    ;; ETH_P_IP = 0x0800 in host order, which becomes 0x0008 in network byte order
+    ;; The info field format is: (priority << 16) | protocol
+    ;; So with priority=1 and ETH_P_IP=0x0008: info = 0x00010008
+    (let [msg (#'tc/build-filter-msg 44 1 :ingress 5 "test" 1 0x05)
+          info-field (extract-info-field msg)
+          protocol (bit-and info-field 0xFFFF)
+          priority (bit-shift-right info-field 16)]
+      ;; Verify protocol is ETH_P_IP in network byte order (0x0008)
+      (is (= 0x0008 protocol)
+          "Protocol should be ETH_P_IP (0x0008 in network byte order)")
+      ;; Verify priority is correct
+      (is (= 1 priority)
+          "Priority should be 1")))
+
+  (testing "Filter message uses ETH_P_IP for egress as well"
+    (let [msg (#'tc/build-filter-msg 44 1 :egress 5 "test" 1 0x05)
+          info-field (extract-info-field msg)
+          protocol (bit-and info-field 0xFFFF)]
+      (is (= 0x0008 protocol)
+          "Egress filter should also use ETH_P_IP (0x0008)")))
+
+  (testing "Protocol field is not ETH_P_ALL (old value was 0x0003)"
+    (let [msg (#'tc/build-filter-msg 44 1 :ingress 5 "test" 1 0x05)
+          info-field (extract-info-field msg)
+          protocol (bit-and info-field 0xFFFF)]
+      (is (not= 0x0003 protocol)
+          "Protocol should NOT be ETH_P_ALL (0x0003)")))
+
+  (testing "Different priorities encode correctly with ETH_P_IP"
+    (doseq [prio [1 10 100 255]]
+      (let [msg (#'tc/build-filter-msg 44 1 :ingress 5 "test" prio 0x05)
+            info-field (extract-info-field msg)
+            protocol (bit-and info-field 0xFFFF)
+            extracted-prio (bit-and (bit-shift-right info-field 16) 0xFFFF)]
+        (is (= 0x0008 protocol)
+            (str "Protocol should be ETH_P_IP for priority " prio))
+        (is (= prio extracted-prio)
+            (str "Priority should be " prio))))))
+
+;; ============================================================================
 ;; TC Program Type Tests
 ;; ============================================================================
 
@@ -232,6 +294,85 @@
 
         (catch Exception e
           ;; Expected to fail without proper permissions
+          (is (or (re-find #"Operation not permitted" (.getMessage e))
+                 (re-find #"Permission denied" (.getMessage e)))))))))
+
+(deftest ^:integration test-tc-egress-filter-ipv4
+  (when (and (linux-with-bpf?)
+            (System/getenv "RUN_INTEGRATION_TESTS"))
+    (testing "TC egress filter works with ETH_P_IP protocol for IPv4 traffic"
+      ;; This test verifies that the ETH_P_IP fix allows egress filters to work
+      ;; Previously, ETH_P_ALL (0x0003) was used which didn't match egress traffic
+      (try
+        (let [bytecode (byte-array [
+                                     ;; mov r0, 0 (TC_ACT_OK - pass the packet)
+                                     0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+                                     ;; exit
+                                     0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00])
+              prog-fd (tc/load-tc-program bytecode :sched-cls
+                                         :prog-name "egress_test"
+                                         :license "GPL")]
+          (try
+            ;; Add clsact qdisc
+            (tc/add-clsact-qdisc "lo")
+
+            ;; Attach egress filter - this is what the ETH_P_IP fix enables
+            (let [info (tc/attach-tc-filter "lo" prog-fd :egress
+                                           :prog-name "egress_filter"
+                                           :priority 1)]
+              (is (some? info) "Egress filter should attach successfully")
+              (is (= :egress (:direction info)) "Direction should be egress")
+              (is (= 1 (:priority info)) "Priority should be 1")
+
+              ;; Detach filter
+              (tc/detach-tc-filter (:ifindex info) (:direction info) (:priority info)))
+
+            (finally
+              (try (tc/remove-clsact-qdisc "lo") (catch Exception _))
+              (try (clj-ebpf.syscall/close-fd prog-fd) (catch Exception _)))))
+
+        (catch Exception e
+          (is (or (re-find #"Operation not permitted" (.getMessage e))
+                 (re-find #"Permission denied" (.getMessage e)))))))))
+
+(deftest ^:integration test-tc-both-directions-ipv4
+  (when (and (linux-with-bpf?)
+            (System/getenv "RUN_INTEGRATION_TESTS"))
+    (testing "TC filters work on both ingress and egress simultaneously"
+      ;; Test that we can attach filters to both directions with ETH_P_IP
+      (try
+        (let [bytecode (byte-array [
+                                     0xb7 0x00 0x00 0x00 0x00 0x00 0x00 0x00  ; mov r0, 0
+                                     0x95 0x00 0x00 0x00 0x00 0x00 0x00 0x00]) ; exit
+              ingress-fd (tc/load-tc-program bytecode :sched-cls
+                                             :prog-name "ingress_prog"
+                                             :license "GPL")
+              egress-fd (tc/load-tc-program bytecode :sched-cls
+                                            :prog-name "egress_prog"
+                                            :license "GPL")]
+          (try
+            (tc/add-clsact-qdisc "lo")
+
+            ;; Attach both ingress and egress filters
+            (let [ingress-info (tc/attach-tc-filter "lo" ingress-fd :ingress
+                                                    :prog-name "ingress_filter"
+                                                    :priority 1)
+                  egress-info (tc/attach-tc-filter "lo" egress-fd :egress
+                                                   :prog-name "egress_filter"
+                                                   :priority 1)]
+              (is (= :ingress (:direction ingress-info)))
+              (is (= :egress (:direction egress-info)))
+
+              ;; Detach both
+              (tc/detach-tc-filter (:ifindex ingress-info) :ingress 1)
+              (tc/detach-tc-filter (:ifindex egress-info) :egress 1))
+
+            (finally
+              (try (tc/remove-clsact-qdisc "lo") (catch Exception _))
+              (try (clj-ebpf.syscall/close-fd ingress-fd) (catch Exception _))
+              (try (clj-ebpf.syscall/close-fd egress-fd) (catch Exception _)))))
+
+        (catch Exception e
           (is (or (re-find #"Operation not permitted" (.getMessage e))
                  (re-find #"Permission denied" (.getMessage e)))))))))
 
