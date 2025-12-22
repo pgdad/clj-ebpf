@@ -142,15 +142,16 @@
 (defn map-lookup
   "Lookup value by key in map"
   [^BpfMap bpf-map key]
-  (let [key-seg (key->segment bpf-map key)
-        value-seg (utils/allocate-memory (:value-size bpf-map))]
-    (try
-      (syscall/map-lookup-elem (:fd bpf-map) key-seg value-seg)
-      (segment->value bpf-map value-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil ; Key not found
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [key-seg (key->segment bpf-map key)
+          value-seg (utils/allocate-memory (:value-size bpf-map))]
+      (try
+        (syscall/map-lookup-elem (:fd bpf-map) key-seg value-seg)
+        (segment->value bpf-map value-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil ; Key not found
+            (throw e)))))))
 
 (defn map-update
   "Update or insert key-value pair in map
@@ -160,39 +161,42 @@
   - :noexist - Create new element, fail if exists
   - :exist - Update existing element, fail if not exists"
   [^BpfMap bpf-map key value & {:keys [flags] :or {flags :any}}]
-  (let [key-seg (key->segment bpf-map key)
-        value-seg (value->segment bpf-map value)
-        flag-bits (if (keyword? flags)
-                    (get const/map-update-flags flags 0)
-                    flags)]
-    (syscall/map-update-elem (:fd bpf-map) key-seg value-seg flag-bits)
-    nil))
+  (utils/with-bpf-arena
+    (let [key-seg (key->segment bpf-map key)
+          value-seg (value->segment bpf-map value)
+          flag-bits (if (keyword? flags)
+                      (get const/map-update-flags flags 0)
+                      flags)]
+      (syscall/map-update-elem (:fd bpf-map) key-seg value-seg flag-bits)
+      nil)))
 
 (defn map-delete
   "Delete entry by key from map"
   [^BpfMap bpf-map key]
-  (let [key-seg (key->segment bpf-map key)]
-    (try
-      (syscall/map-delete-elem (:fd bpf-map) key-seg)
-      true
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          false ; Key not found
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [key-seg (key->segment bpf-map key)]
+      (try
+        (syscall/map-delete-elem (:fd bpf-map) key-seg)
+        true
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            false ; Key not found
+            (throw e)))))))
 
 (defn map-get-next-key
   "Get next key in map (for iteration)
   Pass nil as key to get first key"
   [^BpfMap bpf-map key]
-  (let [key-seg (if key (key->segment bpf-map key) MemorySegment/NULL)
-        next-key-seg (utils/allocate-memory (:key-size bpf-map))]
-    (try
-      (syscall/map-get-next-key (:fd bpf-map) key-seg next-key-seg)
-      (segment->key bpf-map next-key-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil ; No more keys
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [key-seg (if key (key->segment bpf-map key) MemorySegment/NULL)
+          next-key-seg (utils/allocate-memory (:key-size bpf-map))]
+      (try
+        (syscall/map-get-next-key (:fd bpf-map) key-seg next-key-seg)
+        (segment->key bpf-map next-key-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil ; No more keys
+            (throw e)))))))
 
 ;; ============================================================================
 ;; Map Existence Predicates
@@ -209,19 +213,20 @@
   [^BpfMap bpf-map]
   (when-let [fd (:fd bpf-map)]
     (when (pos? fd)
-      (try
-        ;; Try a simple operation - this will fail with EBADF if FD is invalid
-        ;; Use get-next-key with NULL key to check if map is accessible
-        (let [key-seg MemorySegment/NULL
-              next-key-seg (utils/allocate-memory (max (:key-size bpf-map) 4))]
-          (syscall/map-get-next-key fd key-seg next-key-seg)
-          true)
-        (catch clojure.lang.ExceptionInfo e
-          ;; ENOENT means map is empty but valid, EBADF means invalid
-          (let [errno-kw (:errno-keyword (ex-data e))]
-            (not= errno-kw :ebadf)))
-        (catch Exception _
-          false)))))
+      (utils/with-bpf-arena
+        (try
+          ;; Try a simple operation - this will fail with EBADF if FD is invalid
+          ;; Use get-next-key with NULL key to check if map is accessible
+          (let [key-seg MemorySegment/NULL
+                next-key-seg (utils/allocate-memory (max (:key-size bpf-map) 4))]
+            (syscall/map-get-next-key fd key-seg next-key-seg)
+            true)
+          (catch clojure.lang.ExceptionInfo e
+            ;; ENOENT means map is empty but valid, EBADF means invalid
+            (let [errno-kw (:errno-keyword (ex-data e))]
+              (not= errno-kw :ebadf)))
+          (catch Exception _
+            false))))))
 
 (defn map-pinned?
   "Check if a map is pinned to the BPF filesystem.
@@ -405,47 +410,50 @@
   Returns a sequence of [key value] pairs for keys that exist.
   Missing keys are omitted from the result."
   [^BpfMap bpf-map keys]
-  (let [key-size (:key-size bpf-map)
-        value-size (:value-size bpf-map)
-        key-serializer (:key-serializer bpf-map)
-        value-deserializer (:value-deserializer bpf-map)
-        keys-vec (vec keys)
-        count (count keys-vec)
+  (utils/with-bpf-arena
+    (let [key-size (:key-size bpf-map)
+          value-size (:value-size bpf-map)
+          key-serializer (:key-serializer bpf-map)
+          value-deserializer (:value-deserializer bpf-map)
+          keys-vec (vec keys)
+          count (count keys-vec)
 
-        ;; Allocate arrays for keys and values
-        keys-array (utils/allocate-memory (* count key-size))
-        values-array (utils/allocate-memory (* count value-size))]
+          ;; Allocate arrays for keys and values
+          keys-array (utils/allocate-memory (* count key-size))
+          values-array (utils/allocate-memory (* count value-size))]
 
-    ;; Serialize keys into array
-    (doseq [[i k] (map-indexed vector keys-vec)]
-      (let [key-bytes (key-serializer k)
-            key-seg (if (instance? MemorySegment key-bytes)
-                      key-bytes
-                      (utils/bytes->segment key-bytes))
-            offset (* i key-size)]
-        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+      ;; Serialize keys into array
+      (doseq [[i k] (map-indexed vector keys-vec)]
+        (let [key-bytes (key-serializer k)
+              key-seg (if (instance? MemorySegment key-bytes)
+                        key-bytes
+                        (utils/bytes->segment key-bytes))
+              offset (* i key-size)]
+          (MemorySegment/copy key-seg 0 keys-array offset key-size)))
 
-    (try
-      ;; Perform batch lookup
-      (let [actual-count (syscall/map-lookup-batch (:fd bpf-map) keys-array values-array count)]
-        ;; Deserialize results
-        (for [i (range actual-count)]
-          (let [key (nth keys-vec i)
-                value-offset (* i value-size)
-                value-seg (.asSlice keys-array value-offset value-size)
-                value-bytes (utils/segment->bytes value-seg value-size)
-                value (value-deserializer value-bytes)]
-            [key value])))
-      (catch Exception e
-        ;; If batch operation not supported, fall back to individual lookups
-        (if (= :inval (:errno-keyword (ex-data e)))
-          (do
-            (log/warn "Batch lookup not supported, falling back to individual lookups")
-            (keep (fn [k]
-                    (when-let [v (map-lookup bpf-map k)]
-                      [k v]))
-                  keys))
-          (throw e))))))
+      (try
+        ;; Perform batch lookup
+        (let [actual-count (syscall/map-lookup-batch (:fd bpf-map) keys-array values-array count)]
+          ;; Deserialize results
+          (doall
+            (for [i (range actual-count)]
+              (let [key (nth keys-vec i)
+                    value-offset (* i value-size)
+                    value-seg (.asSlice keys-array value-offset value-size)
+                    value-bytes (utils/segment->bytes value-seg value-size)
+                    value (value-deserializer value-bytes)]
+                [key value]))))
+        (catch Exception e
+          ;; If batch operation not supported, fall back to individual lookups
+          (if (= :inval (:errno-keyword (ex-data e)))
+            (do
+              (log/warn "Batch lookup not supported, falling back to individual lookups")
+              (doall
+                (keep (fn [k]
+                        (when-let [v (map-lookup bpf-map k)]
+                          [k v]))
+                      keys)))
+            (throw e)))))))
 
 (defn map-update-batch
   "Batch update multiple key-value pairs in map
@@ -457,47 +465,48 @@
 
   Returns the number of entries successfully updated."
   [^BpfMap bpf-map entries & {:keys [flags] :or {flags :any}}]
-  (let [key-size (:key-size bpf-map)
-        value-size (:value-size bpf-map)
-        key-serializer (:key-serializer bpf-map)
-        value-serializer (:value-serializer bpf-map)
-        entries-vec (vec entries)
-        count (count entries-vec)
-        flag-bits (if (keyword? flags)
-                    (get const/map-update-flags flags 0)
-                    flags)
+  (utils/with-bpf-arena
+    (let [key-size (:key-size bpf-map)
+          value-size (:value-size bpf-map)
+          key-serializer (:key-serializer bpf-map)
+          value-serializer (:value-serializer bpf-map)
+          entries-vec (vec entries)
+          count (count entries-vec)
+          flag-bits (if (keyword? flags)
+                      (get const/map-update-flags flags 0)
+                      flags)
 
-        ;; Allocate arrays for keys and values
-        keys-array (utils/allocate-memory (* count key-size))
-        values-array (utils/allocate-memory (* count value-size))]
+          ;; Allocate arrays for keys and values
+          keys-array (utils/allocate-memory (* count key-size))
+          values-array (utils/allocate-memory (* count value-size))]
 
-    ;; Serialize keys and values into arrays
-    (doseq [[i [k v]] (map-indexed vector entries-vec)]
-      (let [key-bytes (key-serializer k)
-            value-bytes (value-serializer v)
-            key-seg (if (instance? MemorySegment key-bytes)
-                      key-bytes
-                      (utils/bytes->segment key-bytes))
-            value-seg (if (instance? MemorySegment value-bytes)
-                        value-bytes
-                        (utils/bytes->segment value-bytes))
-            key-offset (* i key-size)
-            value-offset (* i value-size)]
-        (MemorySegment/copy key-seg 0 keys-array key-offset key-size)
-        (MemorySegment/copy value-seg 0 values-array value-offset value-size)))
+      ;; Serialize keys and values into arrays
+      (doseq [[i [k v]] (map-indexed vector entries-vec)]
+        (let [key-bytes (key-serializer k)
+              value-bytes (value-serializer v)
+              key-seg (if (instance? MemorySegment key-bytes)
+                        key-bytes
+                        (utils/bytes->segment key-bytes))
+              value-seg (if (instance? MemorySegment value-bytes)
+                          value-bytes
+                          (utils/bytes->segment value-bytes))
+              key-offset (* i key-size)
+              value-offset (* i value-size)]
+          (MemorySegment/copy key-seg 0 keys-array key-offset key-size)
+          (MemorySegment/copy value-seg 0 values-array value-offset value-size)))
 
-    (try
-      ;; Perform batch update
-      (syscall/map-update-batch (:fd bpf-map) keys-array values-array count :elem-flags flag-bits)
-      (catch Exception e
-        ;; If batch operation not supported, fall back to individual updates
-        (if (= :inval (:errno-keyword (ex-data e)))
-          (do
-            (log/warn "Batch update not supported, falling back to individual updates")
-            (doseq [[k v] entries]
-              (map-update bpf-map k v :flags flags))
-            count)
-          (throw e))))))
+      (try
+        ;; Perform batch update
+        (syscall/map-update-batch (:fd bpf-map) keys-array values-array count :elem-flags flag-bits)
+        (catch Exception e
+          ;; If batch operation not supported, fall back to individual updates
+          (if (= :inval (:errno-keyword (ex-data e)))
+            (do
+              (log/warn "Batch update not supported, falling back to individual updates")
+              (doseq [[k v] entries]
+                (map-update bpf-map k v :flags flags))
+              count)
+            (throw e)))))))
 
 (defn map-delete-batch
   "Batch delete multiple keys from map
@@ -508,38 +517,39 @@
 
   Returns the number of keys successfully deleted."
   [^BpfMap bpf-map keys]
-  (let [key-size (:key-size bpf-map)
-        key-serializer (:key-serializer bpf-map)
-        keys-vec (vec keys)
-        count (count keys-vec)
+  (utils/with-bpf-arena
+    (let [key-size (:key-size bpf-map)
+          key-serializer (:key-serializer bpf-map)
+          keys-vec (vec keys)
+          count (count keys-vec)
 
-        ;; Allocate array for keys
-        keys-array (utils/allocate-memory (* count key-size))]
+          ;; Allocate array for keys
+          keys-array (utils/allocate-memory (* count key-size))]
 
-    ;; Serialize keys into array
-    (doseq [[i k] (map-indexed vector keys-vec)]
-      (let [key-bytes (key-serializer k)
-            key-seg (if (instance? MemorySegment key-bytes)
-                      key-bytes
-                      (utils/bytes->segment key-bytes))
-            offset (* i key-size)]
-        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+      ;; Serialize keys into array
+      (doseq [[i k] (map-indexed vector keys-vec)]
+        (let [key-bytes (key-serializer k)
+              key-seg (if (instance? MemorySegment key-bytes)
+                        key-bytes
+                        (utils/bytes->segment key-bytes))
+              offset (* i key-size)]
+          (MemorySegment/copy key-seg 0 keys-array offset key-size)))
 
-    (try
-      ;; Perform batch delete
-      (syscall/map-delete-batch (:fd bpf-map) keys-array count)
-      (catch Exception e
-        ;; If batch operation not supported, fall back to individual deletes
-        (if (= :inval (:errno-keyword (ex-data e)))
-          (do
-            (log/warn "Batch delete not supported, falling back to individual deletes")
-            (reduce (fn [cnt k]
-                      (if (map-delete bpf-map k)
-                        (inc cnt)
-                        cnt))
-                    0
-                    keys))
-          (throw e))))))
+      (try
+        ;; Perform batch delete
+        (syscall/map-delete-batch (:fd bpf-map) keys-array count)
+        (catch Exception e
+          ;; If batch operation not supported, fall back to individual deletes
+          (if (= :inval (:errno-keyword (ex-data e)))
+            (do
+              (log/warn "Batch delete not supported, falling back to individual deletes")
+              (reduce (fn [cnt k]
+                        (if (map-delete bpf-map k)
+                          (inc cnt)
+                          cnt))
+                      0
+                      keys))
+            (throw e)))))))
 
 (defn map-lookup-and-delete-batch
   "Batch lookup and delete multiple keys from map atomically
@@ -551,48 +561,51 @@
   Returns a sequence of [key value] pairs for keys that existed.
   Keys are deleted from the map after being read."
   [^BpfMap bpf-map keys]
-  (let [key-size (:key-size bpf-map)
-        value-size (:value-size bpf-map)
-        key-serializer (:key-serializer bpf-map)
-        value-deserializer (:value-deserializer bpf-map)
-        keys-vec (vec keys)
-        count (count keys-vec)
+  (utils/with-bpf-arena
+    (let [key-size (:key-size bpf-map)
+          value-size (:value-size bpf-map)
+          key-serializer (:key-serializer bpf-map)
+          value-deserializer (:value-deserializer bpf-map)
+          keys-vec (vec keys)
+          count (count keys-vec)
 
-        ;; Allocate arrays for keys and values
-        keys-array (utils/allocate-memory (* count key-size))
-        values-array (utils/allocate-memory (* count value-size))]
+          ;; Allocate arrays for keys and values
+          keys-array (utils/allocate-memory (* count key-size))
+          values-array (utils/allocate-memory (* count value-size))]
 
-    ;; Serialize keys into array
-    (doseq [[i k] (map-indexed vector keys-vec)]
-      (let [key-bytes (key-serializer k)
-            key-seg (if (instance? MemorySegment key-bytes)
-                      key-bytes
-                      (utils/bytes->segment key-bytes))
-            offset (* i key-size)]
-        (MemorySegment/copy key-seg 0 keys-array offset key-size)))
+      ;; Serialize keys into array
+      (doseq [[i k] (map-indexed vector keys-vec)]
+        (let [key-bytes (key-serializer k)
+              key-seg (if (instance? MemorySegment key-bytes)
+                        key-bytes
+                        (utils/bytes->segment key-bytes))
+              offset (* i key-size)]
+          (MemorySegment/copy key-seg 0 keys-array offset key-size)))
 
-    (try
-      ;; Perform batch lookup and delete
-      (let [actual-count (syscall/map-lookup-and-delete-batch (:fd bpf-map) keys-array values-array count)]
-        ;; Deserialize results
-        (for [i (range actual-count)]
-          (let [key (nth keys-vec i)
-                value-offset (* i value-size)
-                value-seg (.asSlice keys-array value-offset value-size)
-                value-bytes (utils/segment->bytes value-seg value-size)
-                value (value-deserializer value-bytes)]
-            [key value])))
-      (catch Exception e
-        ;; If batch operation not supported, fall back to individual operations
-        (if (= :inval (:errno-keyword (ex-data e)))
-          (do
-            (log/warn "Batch lookup-and-delete not supported, falling back to individual operations")
-            (keep (fn [k]
-                    (when-let [v (map-lookup bpf-map k)]
-                      (map-delete bpf-map k)
-                      [k v]))
-                  keys))
-          (throw e))))))
+      (try
+        ;; Perform batch lookup and delete
+        (let [actual-count (syscall/map-lookup-and-delete-batch (:fd bpf-map) keys-array values-array count)]
+          ;; Deserialize results
+          (doall
+            (for [i (range actual-count)]
+              (let [key (nth keys-vec i)
+                    value-offset (* i value-size)
+                    value-seg (.asSlice keys-array value-offset value-size)
+                    value-bytes (utils/segment->bytes value-seg value-size)
+                    value (value-deserializer value-bytes)]
+                [key value]))))
+        (catch Exception e
+          ;; If batch operation not supported, fall back to individual operations
+          (if (= :inval (:errno-keyword (ex-data e)))
+            (do
+              (log/warn "Batch lookup-and-delete not supported, falling back to individual operations")
+              (doall
+                (keep (fn [k]
+                        (when-let [v (map-lookup bpf-map k)]
+                          (map-delete bpf-map k)
+                          [k v]))
+                      keys)))
+            (throw e)))))))
 
 ;; Stack and Queue map operations
 
@@ -605,9 +618,10 @@
 
   Returns nil on success, throws on error."
   [^BpfMap bpf-map value]
-  (let [value-seg (value->segment bpf-map value)]
-    (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
-    nil))
+  (utils/with-bpf-arena
+    (let [value-seg (value->segment bpf-map value)]
+      (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
+      nil)))
 
 (defn stack-pop
   "Pop a value from a stack map (LIFO)
@@ -617,15 +631,16 @@
 
   Returns the popped value, or nil if stack is empty."
   [^BpfMap bpf-map]
-  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
-    (try
-      ;; Use atomic lookup-and-delete for stack/queue maps
-      (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
-      (segment->value bpf-map value-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil  ; Stack is empty
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+      (try
+        ;; Use atomic lookup-and-delete for stack/queue maps
+        (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+        (segment->value bpf-map value-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil  ; Stack is empty
+            (throw e)))))))
 
 (defn stack-peek
   "Peek at the top value of a stack map without removing it
@@ -635,14 +650,15 @@
 
   Returns the top value, or nil if stack is empty."
   [^BpfMap bpf-map]
-  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
-    (try
-      (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
-      (segment->value bpf-map value-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil  ; Stack is empty
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+      (try
+        (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+        (segment->value bpf-map value-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil  ; Stack is empty
+            (throw e)))))))
 
 (defn queue-push
   "Push a value onto a queue map (enqueue)
@@ -653,9 +669,10 @@
 
   Returns nil on success, throws on error."
   [^BpfMap bpf-map value]
-  (let [value-seg (value->segment bpf-map value)]
-    (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
-    nil))
+  (utils/with-bpf-arena
+    (let [value-seg (value->segment bpf-map value)]
+      (syscall/map-update-elem (:fd bpf-map) MemorySegment/NULL value-seg 0)
+      nil)))
 
 (defn queue-pop
   "Pop a value from a queue map (dequeue, FIFO)
@@ -665,15 +682,16 @@
 
   Returns the popped value, or nil if queue is empty."
   [^BpfMap bpf-map]
-  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
-    (try
-      ;; Use atomic lookup-and-delete for stack/queue maps
-      (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
-      (segment->value bpf-map value-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil  ; Queue is empty
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+      (try
+        ;; Use atomic lookup-and-delete for stack/queue maps
+        (syscall/map-lookup-and-delete-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+        (segment->value bpf-map value-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil  ; Queue is empty
+            (throw e)))))))
 
 (defn queue-peek
   "Peek at the front value of a queue map without removing it
@@ -683,14 +701,15 @@
 
   Returns the front value, or nil if queue is empty."
   [^BpfMap bpf-map]
-  (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
-    (try
-      (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
-      (segment->value bpf-map value-seg)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          nil  ; Queue is empty
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [value-seg (utils/allocate-memory (:value-size bpf-map))]
+      (try
+        (syscall/map-lookup-elem (:fd bpf-map) MemorySegment/NULL value-seg)
+        (segment->value bpf-map value-seg)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            nil  ; Queue is empty
+            (throw e)))))))
 
 ;; Map pinning
 
@@ -1302,11 +1321,12 @@
   - bloom-map: Bloom filter map
   - value: Value bytes to add (must match value-size)"
   [^BpfMap bloom-map value]
-  (let [value-seg (if (instance? MemorySegment value)
-                    value
-                    (utils/bytes->segment value))]
-    ;; Bloom filters use update with NULL key
-    (syscall/map-update-elem (:fd bloom-map) MemorySegment/NULL value-seg 0)))
+  (utils/with-bpf-arena
+    (let [value-seg (if (instance? MemorySegment value)
+                      value
+                      (utils/bytes->segment value))]
+      ;; Bloom filters use update with NULL key
+      (syscall/map-update-elem (:fd bloom-map) MemorySegment/NULL value-seg 0))))
 
 (defn bloom-check
   "Check if an element might be in the bloom filter.
@@ -1319,15 +1339,16 @@
   - bloom-map: Bloom filter map
   - value: Value bytes to check"
   [^BpfMap bloom-map value]
-  (let [value-seg (if (instance? MemorySegment value)
-                    value
-                    (utils/bytes->segment value))]
-    (try
-      ;; Bloom filters use lookup with value in the key position
-      (syscall/map-lookup-elem (:fd bloom-map) value-seg
-                               (utils/allocate-memory (:value-size bloom-map)))
-      true  ; Found (might be false positive)
-      (catch clojure.lang.ExceptionInfo e
-        (if (= :enoent (:errno-keyword (ex-data e)))
-          false  ; Definitely not in set
-          (throw e))))))
+  (utils/with-bpf-arena
+    (let [value-seg (if (instance? MemorySegment value)
+                      value
+                      (utils/bytes->segment value))]
+      (try
+        ;; Bloom filters use lookup with value in the key position
+        (syscall/map-lookup-elem (:fd bloom-map) value-seg
+                                 (utils/allocate-memory (:value-size bloom-map)))
+        true  ; Found (might be false positive)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :enoent (:errno-keyword (ex-data e)))
+            false  ; Definitely not in set
+            (throw e)))))))

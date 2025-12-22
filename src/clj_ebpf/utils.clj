@@ -5,8 +5,31 @@
   (:import [java.lang.foreign Arena MemorySegment ValueLayout]
            [java.nio ByteBuffer ByteOrder]))
 
-;; Arena for memory allocation (auto-managed by GC)
-(def ^:private ^:dynamic *arena* (Arena/ofAuto))
+;; Dynamic arena for per-operation memory allocation
+;; IMPORTANT: This must be bound via with-bpf-arena before any allocation
+(def ^:private ^:dynamic *arena* nil)
+
+(defn- ensure-arena
+  "Get the current arena or throw if none is bound.
+   All memory allocations must happen within a with-bpf-arena block."
+  []
+  (or *arena*
+      (throw (ex-info "No arena bound. Memory allocations must happen within with-bpf-arena block." {}))))
+
+(defmacro with-bpf-arena
+  "Execute body with a confined arena for safe memory allocation.
+   All memory allocated within the body remains valid until the block exits
+   and the arena is closed. This prevents GC from reclaiming memory prematurely.
+
+   Use this macro when you need to allocate memory for operations that span
+   multiple function calls or when the allocated memory is passed to syscalls."
+  [& body]
+  `(let [arena# (Arena/ofConfined)]
+     (try
+       (binding [*arena* arena#]
+         ~@body)
+       (finally
+         (.close arena#)))))
 
 ;; Value layouts
 (def ^:private C_INT ValueLayout/JAVA_INT)
@@ -17,9 +40,10 @@
 ;; Memory allocation and management
 
 (defn allocate-memory
-  "Allocate native memory of given size"
+  "Allocate native memory of given size.
+   Must be called within a with-bpf-arena block."
   [size]
-  (.allocate *arena* (long size) 8))
+  (.allocate (ensure-arena) (long size) 8))
 
 (defn segment->bytes
   "Read bytes from a memory segment"
@@ -30,10 +54,11 @@
       bytes)))
 
 (defn bytes->segment
-  "Write bytes to a newly allocated memory segment"
+  "Write bytes to a newly allocated memory segment.
+   Must be called within a with-bpf-arena block."
   [^bytes bytes]
   (when bytes
-    (let [seg (.allocate *arena* (long (count bytes)) 1)
+    (let [seg (.allocate (ensure-arena) (long (count bytes)) 1)
           src (MemorySegment/ofArray bytes)]
       (MemorySegment/copy src 0 seg 0 (count bytes))
       seg)))

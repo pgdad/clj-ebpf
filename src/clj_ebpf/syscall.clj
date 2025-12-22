@@ -7,10 +7,36 @@
            [java.lang.invoke MethodHandle]))
 
 ;; Panama FFI setup
-;; Arena for memory allocation (auto-managed by GC)
-(def ^:private ^:dynamic *arena* (Arena/ofAuto))
+;; Dynamic arena for per-syscall memory allocation
+;; IMPORTANT: This must be bound via with-bpf-syscall before any allocation
+(def ^:private ^:dynamic *arena* nil)
+
+;; Shared arena for library lookups - these need to persist for the lifetime of the JVM
+(def ^:private ^Arena libc-arena (Arena/ofShared))
 
 (def ^:private linker (Linker/nativeLinker))
+
+(defn- ensure-arena
+  "Get the current arena or throw if none is bound.
+   All memory allocations must happen within a with-bpf-syscall block."
+  []
+  (or *arena*
+      (throw (ex-info "No arena bound. Memory allocations must happen within with-bpf-syscall block." {}))))
+
+(defmacro with-bpf-syscall
+  "Execute body with a confined arena for safe memory allocation.
+   All memory allocated within the body remains valid until the syscall completes
+   and the arena is closed. This prevents GC from reclaiming memory prematurely.
+
+   CRITICAL: All BPF syscall functions must be wrapped with this macro to prevent
+   memory corruption when loading multiple programs."
+  [& body]
+  `(let [arena# (Arena/ofConfined)]
+     (try
+       (binding [*arena* arena#]
+         ~@body)
+       (finally
+         (.close arena#)))))
 
 (defn- find-libc-lookup
   "Find libc using architecture-aware path discovery"
@@ -19,13 +45,13 @@
    ;; Try architecture-specific path first
    (when-let [libc-path (arch/find-libc-path)]
      (try
-       (SymbolLookup/libraryLookup libc-path *arena*)
+       (SymbolLookup/libraryLookup libc-path libc-arena)
        (catch Exception e
          (log/warn "Failed to load libc from" libc-path ":" (.getMessage e))
          nil)))
    ;; Fallback to generic names
-   (try (SymbolLookup/libraryLookup "libc.so.6" *arena*) (catch Exception _ nil))
-   (try (SymbolLookup/libraryLookup "c" *arena*) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "libc.so.6" libc-arena) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "c" libc-arena) (catch Exception _ nil))
    ;; Final fallback to loader lookup
    (SymbolLookup/loaderLookup)))
 
@@ -84,9 +110,10 @@
 
 ;; Helper to allocate and zero memory
 (defn allocate-zeroed
-  "Allocate zeroed memory segment"
+  "Allocate zeroed memory segment.
+   Must be called within a with-bpf-syscall block."
   [size]
-  (let [segment (.allocate *arena* (long size) 8)]
+  (let [segment (.allocate (ensure-arena) (long size) 8)]
     (.fill segment (byte 0))
     segment))
 
@@ -232,7 +259,8 @@
    ^Integer attach-prog-fd])    ;; Optional - nullable
 
 (defn prog-load-attr->segment
-  "Convert ProgLoadAttr to MemorySegment for syscall"
+  "Convert ProgLoadAttr to MemorySegment for syscall.
+   Must be called within a with-bpf-syscall block."
   [attr]
   (let [mem (allocate-zeroed 128)]
     (.set mem C_INT 0 (:prog-type attr))
@@ -240,7 +268,7 @@
     (.set mem C_POINTER 8 (:insns attr))
     (when (:license attr)
       (let [lic-bytes (.getBytes (:license attr) "UTF-8")
-            lic-mem (.allocate *arena* (inc (count lic-bytes)) 1)
+            lic-mem (.allocate (ensure-arena) (inc (count lic-bytes)) 1)
             src (MemorySegment/ofArray lic-bytes)]
         (MemorySegment/copy src 0 lic-mem 0 (count lic-bytes))
         (.set mem C_POINTER 16 lic-mem)))
@@ -274,11 +302,12 @@
    ^Integer file-flags])  ;; Optional - nullable
 
 (defn obj-pin-attr->segment
-  "Convert ObjPinAttr to MemorySegment for syscall"
+  "Convert ObjPinAttr to MemorySegment for syscall.
+   Must be called within a with-bpf-syscall block."
   [attr]
   (let [mem (allocate-zeroed 128)
         path-bytes (.getBytes (:pathname attr) "UTF-8")
-        path-mem (.allocate *arena* (inc (count path-bytes)) 1)
+        path-mem (.allocate (ensure-arena) (inc (count path-bytes)) 1)
         src (MemorySegment/ofArray path-bytes)]
     (MemorySegment/copy src 0 path-mem 0 (count path-bytes))
     (.set mem C_POINTER 0 path-mem)
@@ -291,11 +320,12 @@
    ^int prog-fd])
 
 (defn raw-tracepoint-attr->segment
-  "Convert RawTracepointAttr to MemorySegment for syscall"
+  "Convert RawTracepointAttr to MemorySegment for syscall.
+   Must be called within a with-bpf-syscall block."
   [attr]
   (let [mem (allocate-zeroed 128)
         name-bytes (.getBytes (:name attr) "UTF-8")
-        name-mem (.allocate *arena* (inc (count name-bytes)) 1)
+        name-mem (.allocate (ensure-arena) (inc (count name-bytes)) 1)
         src (MemorySegment/ofArray name-bytes)]
     (MemorySegment/copy src 0 name-mem 0 (count name-bytes))
     (.set mem C_POINTER 0 name-mem)
@@ -333,46 +363,50 @@
            btf-fd btf-key-type-id btf-value-type-id
            btf-vmlinux-value-type-id map-extra]
     :or {map-flags 0}}]
-  (let [attr (->MapCreateAttr
-               (if (keyword? map-type)
-                 (const/map-type->num map-type)
-                 map-type)
-               key-size
-               value-size
-               max-entries
-               map-flags
-               inner-map-fd
-               numa-node
-               map-name
-               map-ifindex
-               btf-fd
-               btf-key-type-id
-               btf-value-type-id
-               btf-vmlinux-value-type-id
-               map-extra)
-        mem (map-create-attr->segment attr)]
-    (int (bpf-syscall :map-create mem))))
+  (with-bpf-syscall
+    (let [attr (->MapCreateAttr
+                 (if (keyword? map-type)
+                   (const/map-type->num map-type)
+                   map-type)
+                 key-size
+                 value-size
+                 max-entries
+                 map-flags
+                 inner-map-fd
+                 numa-node
+                 map-name
+                 map-ifindex
+                 btf-fd
+                 btf-key-type-id
+                 btf-value-type-id
+                 btf-vmlinux-value-type-id
+                 map-extra)
+          mem (map-create-attr->segment attr)]
+      (int (bpf-syscall :map-create mem)))))
 
 (defn map-lookup-elem
   "Lookup element in BPF map"
   [map-fd key-seg value-seg]
-  (let [attr (->MapElemAttr map-fd key-seg value-seg 0)
-        mem (map-elem-attr->segment attr)]
-    (bpf-syscall :map-lookup-elem mem)))
+  (with-bpf-syscall
+    (let [attr (->MapElemAttr map-fd key-seg value-seg 0)
+          mem (map-elem-attr->segment attr)]
+      (bpf-syscall :map-lookup-elem mem))))
 
 (defn map-update-elem
   "Update element in BPF map"
   [map-fd key-seg value-seg flags]
-  (let [attr (->MapElemAttr map-fd key-seg value-seg flags)
-        mem (map-elem-attr->segment attr)]
-    (bpf-syscall :map-update-elem mem)))
+  (with-bpf-syscall
+    (let [attr (->MapElemAttr map-fd key-seg value-seg flags)
+          mem (map-elem-attr->segment attr)]
+      (bpf-syscall :map-update-elem mem))))
 
 (defn map-delete-elem
   "Delete element from BPF map"
   [map-fd key-seg]
-  (let [attr (->MapElemAttr map-fd key-seg nil 0)
-        mem (map-elem-attr->segment attr)]
-    (bpf-syscall :map-delete-elem mem)))
+  (with-bpf-syscall
+    (let [attr (->MapElemAttr map-fd key-seg nil 0)
+          mem (map-elem-attr->segment attr)]
+      (bpf-syscall :map-delete-elem mem))))
 
 (defn map-lookup-and-delete-elem
   "Atomically lookup and delete element from BPF map.
@@ -381,16 +415,18 @@
   must be atomic. Regular maps can also use this for atomic
   lookup-and-delete operations."
   [map-fd key-seg value-seg]
-  (let [attr (->MapElemAttr map-fd key-seg value-seg 0)
-        mem (map-elem-attr->segment attr)]
-    (bpf-syscall :map-lookup-and-delete-elem mem)))
+  (with-bpf-syscall
+    (let [attr (->MapElemAttr map-fd key-seg value-seg 0)
+          mem (map-elem-attr->segment attr)]
+      (bpf-syscall :map-lookup-and-delete-elem mem))))
 
 (defn map-get-next-key
   "Get next key in BPF map (for iteration)"
   [map-fd key-seg next-key-seg]
-  (let [attr (->MapNextKeyAttr map-fd key-seg next-key-seg)
-        mem (map-next-key-attr->segment attr)]
-    (bpf-syscall :map-get-next-key mem)))
+  (with-bpf-syscall
+    (let [attr (->MapNextKeyAttr map-fd key-seg next-key-seg)
+          mem (map-next-key-attr->segment attr)]
+      (bpf-syscall :map-get-next-key mem))))
 
 ;; Batch operations
 
@@ -407,12 +443,13 @@
   Returns the number of elements successfully looked up.
   The count field in the attr structure is updated with the actual count."
   [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
-  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
-        mem (map-batch-attr->segment attr)
-        result (bpf-syscall :map-lookup-batch mem)]
-    ;; Return the actual count of elements processed
-    ;; The kernel updates the count field at offset 24
-    (.get mem C_INT 24)))
+  (with-bpf-syscall
+    (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+          mem (map-batch-attr->segment attr)
+          result (bpf-syscall :map-lookup-batch mem)]
+      ;; Return the actual count of elements processed
+      ;; The kernel updates the count field at offset 24
+      (.get mem C_INT 24))))
 
 (defn map-lookup-and-delete-batch
   "Batch lookup and delete elements in BPF map
@@ -427,10 +464,11 @@
   Returns the number of elements successfully processed.
   Elements are deleted from the map after being read."
   [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
-  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
-        mem (map-batch-attr->segment attr)
-        result (bpf-syscall :map-lookup-and-delete-batch mem)]
-    (.get mem C_INT 24)))
+  (with-bpf-syscall
+    (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+          mem (map-batch-attr->segment attr)
+          result (bpf-syscall :map-lookup-and-delete-batch mem)]
+      (.get mem C_INT 24))))
 
 (defn map-update-batch
   "Batch update elements in BPF map
@@ -444,10 +482,11 @@
 
   Returns the number of elements successfully updated."
   [map-fd keys-seg values-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
-  (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
-        mem (map-batch-attr->segment attr)
-        result (bpf-syscall :map-update-batch mem)]
-    (.get mem C_INT 24)))
+  (with-bpf-syscall
+    (let [attr (->MapBatchAttr map-fd nil nil keys-seg values-seg count elem-flags)
+          mem (map-batch-attr->segment attr)
+          result (bpf-syscall :map-update-batch mem)]
+      (.get mem C_INT 24))))
 
 (defn map-delete-batch
   "Batch delete elements from BPF map
@@ -460,10 +499,11 @@
 
   Returns the number of elements successfully deleted."
   [map-fd keys-seg count & {:keys [elem-flags] :or {elem-flags 0}}]
-  (let [attr (->MapBatchAttr map-fd nil nil keys-seg nil count elem-flags)
-        mem (map-batch-attr->segment attr)
-        result (bpf-syscall :map-delete-batch mem)]
-    (.get mem C_INT 24)))
+  (with-bpf-syscall
+    (let [attr (->MapBatchAttr map-fd nil nil keys-seg nil count elem-flags)
+          mem (map-batch-attr->segment attr)
+          result (bpf-syscall :map-delete-batch mem)]
+      (.get mem C_INT 24))))
 
 (defn prog-load
   "Load a BPF program"
@@ -473,53 +513,57 @@
            line-info-rec-size line-info line-info-cnt attach-btf-id
            attach-prog-fd]
     :or {log-level 0 log-size 0 kern-version 0 prog-flags 0}}]
-  (let [attr (->ProgLoadAttr
-               (if (keyword? prog-type)
-                 (const/prog-type->num prog-type)
-                 prog-type)
-               insn-cnt
-               insns
-               license
-               log-level
-               log-size
-               log-buf
-               kern-version
-               prog-flags
-               prog-name
-               prog-ifindex
-               expected-attach-type
-               prog-btf-fd
-               func-info-rec-size
-               func-info
-               func-info-cnt
-               line-info-rec-size
-               line-info
-               line-info-cnt
-               attach-btf-id
-               attach-prog-fd)
-        mem (prog-load-attr->segment attr)]
-    (int (bpf-syscall :prog-load mem))))
+  (with-bpf-syscall
+    (let [attr (->ProgLoadAttr
+                 (if (keyword? prog-type)
+                   (const/prog-type->num prog-type)
+                   prog-type)
+                 insn-cnt
+                 insns
+                 license
+                 log-level
+                 log-size
+                 log-buf
+                 kern-version
+                 prog-flags
+                 prog-name
+                 prog-ifindex
+                 expected-attach-type
+                 prog-btf-fd
+                 func-info-rec-size
+                 func-info
+                 func-info-cnt
+                 line-info-rec-size
+                 line-info
+                 line-info-cnt
+                 attach-btf-id
+                 attach-prog-fd)
+          mem (prog-load-attr->segment attr)]
+      (int (bpf-syscall :prog-load mem)))))
 
 (defn obj-pin
   "Pin BPF object to filesystem"
   [pathname bpf-fd & {:keys [file-flags] :or {file-flags 0}}]
-  (let [attr (->ObjPinAttr pathname bpf-fd file-flags)
-        mem (obj-pin-attr->segment attr)]
-    (bpf-syscall :obj-pin mem)))
+  (with-bpf-syscall
+    (let [attr (->ObjPinAttr pathname bpf-fd file-flags)
+          mem (obj-pin-attr->segment attr)]
+      (bpf-syscall :obj-pin mem))))
 
 (defn obj-get
   "Get BPF object from filesystem"
   [pathname & {:keys [file-flags] :or {file-flags 0}}]
-  (let [attr (->ObjPinAttr pathname 0 file-flags)
-        mem (obj-pin-attr->segment attr)]
-    (int (bpf-syscall :obj-get mem))))
+  (with-bpf-syscall
+    (let [attr (->ObjPinAttr pathname 0 file-flags)
+          mem (obj-pin-attr->segment attr)]
+      (int (bpf-syscall :obj-get mem)))))
 
 (defn raw-tracepoint-open
   "Open a raw tracepoint and attach BPF program"
   [name prog-fd]
-  (let [attr (->RawTracepointAttr name prog-fd)
-        mem (raw-tracepoint-attr->segment attr)]
-    (int (bpf-syscall :raw-tracepoint-open mem))))
+  (with-bpf-syscall
+    (let [attr (->RawTracepointAttr name prog-fd)
+          mem (raw-tracepoint-attr->segment attr)]
+      (int (bpf-syscall :raw-tracepoint-open mem)))))
 
 ;; Perf event syscall (needed for kprobes)
 ;; perf_event_open syscall wrapper
@@ -629,78 +673,59 @@
   "Create a BPF link for kprobe using BPF_LINK_CREATE (modern method)
    Returns link FD"
   [prog-fd function-name retprobe?]
-  (let [attr-mem (allocate-zeroed 128)
-        ;; Allocate memory for the symbol name (null-terminated string)
-        func-name-bytes (.getBytes (str function-name "\0") "UTF-8")
-        func-name-mem (.allocate *arena* (long (alength func-name-bytes)) 1)]
-    ;; Copy the function name to native memory
-    (java.lang.foreign.MemorySegment/copy func-name-bytes 0 func-name-mem
-                                          (java.lang.foreign.ValueLayout/JAVA_BYTE) 0
-                                          (alength func-name-bytes))
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 128)
+          ;; Allocate memory for the symbol name (null-terminated string)
+          func-name-bytes (.getBytes (str function-name "\0") "UTF-8")
+          func-name-mem (.allocate (ensure-arena) (long (alength func-name-bytes)) 1)]
+      ;; Copy the function name to native memory
+      (java.lang.foreign.MemorySegment/copy func-name-bytes 0 func-name-mem
+                                            (java.lang.foreign.ValueLayout/JAVA_BYTE) 0
+                                            (alength func-name-bytes))
 
-    ;; Build bpf_attr for BPF_LINK_CREATE with kprobe_multi
-    ;; struct bpf_attr for BPF_LINK_CREATE:
-    ;;   prog_fd (offset 0, u32)
-    ;;   target_fd (offset 4, u32)
-    ;;   attach_type (offset 8, u32)
-    ;;   flags (offset 12, u32)
-    ;;   kprobe_multi substruct (offset 16):
-    ;;     flags (offset 16, u32) - BPF_F_KPROBE_MULTI_RETURN = 1 for retprobe
-    ;;     cnt (offset 20, u32) - number of symbols
-    ;;     syms (offset 24, u64) - pointer to array of symbol name pointers
-    ;;     addrs (offset 32, u64) - pointer to array of addresses (alternative to syms)
-    ;;     cookies (offset 40, u64) - pointer to array of cookies
+      ;; Build bpf_attr for BPF_LINK_CREATE with kprobe_multi
+      ;; prog_fd (offset 0)
+      (.set attr-mem C_INT 0 (int prog-fd))
+      ;; target_fd (offset 4) - not used for kprobe_multi
+      (.set attr-mem C_INT 4 (int 0))
+      ;; attach_type (offset 8) - BPF_TRACE_KPROBE_MULTI = 42
+      (.set attr-mem C_INT 8 (int (const/attach-type->num :trace-kprobe-multi)))
+      ;; flags (offset 12) - main link flags
+      (.set attr-mem C_INT 12 (int 0))
+      ;; kprobe_multi.flags (offset 16)
+      (.set attr-mem C_INT 16 (int (if retprobe? 1 0)))
+      ;; kprobe_multi.cnt (offset 20)
+      (.set attr-mem C_INT 20 (int 1))
 
-    ;; prog_fd (offset 0)
-    (.set attr-mem C_INT 0 (int prog-fd))
-    ;; target_fd (offset 4) - not used for kprobe_multi
-    (.set attr-mem C_INT 4 (int 0))
-    ;; attach_type (offset 8) - BPF_TRACE_KPROBE_MULTI = 42
-    (.set attr-mem C_INT 8 (int (const/attach-type->num :trace-kprobe-multi)))
-    ;; flags (offset 12) - main link flags
-    (.set attr-mem C_INT 12 (int 0))
+      ;; Create array of symbol name pointers
+      (let [sym-ptr-array (.allocate (ensure-arena) 8 8)]
+        (.set sym-ptr-array C_LONG 0 (.address func-name-mem))
+        (.set attr-mem C_LONG 24 (.address sym-ptr-array))
+        (.set attr-mem C_LONG 32 (long 0))
+        (.set attr-mem C_LONG 40 (long 0)))
 
-    ;; kprobe_multi.flags (offset 16)
-    (.set attr-mem C_INT 16 (int (if retprobe? 1 0)))
-    ;; kprobe_multi.cnt (offset 20)
-    (.set attr-mem C_INT 20 (int 1))
+      (log/debug "BPF_LINK_CREATE kprobe_multi:"
+                 "\n  prog_fd:" prog-fd
+                 "\n  attach_type:" (const/attach-type->num :trace-kprobe-multi)
+                 "\n  function:" function-name
+                 "\n  retprobe?:" retprobe?
+                 "\n  func_name_mem addr:" (.address func-name-mem)
+                 "\n  syms field value:" (.get attr-mem C_LONG 24))
 
-    ;; Create array of symbol name pointers
-    ;; syms is a pointer to an array of (const char *) pointers
-    (let [sym-ptr-array (.allocate *arena* 8 8)]  ; allocate 8 bytes (1 pointer), align to 8
-      ;; Store the address of the function name string as a long value
-      ;; This is the key fix: use C_LONG with .address(), not C_POINTER with MemorySegment
-      (.set sym-ptr-array C_LONG 0 (.address func-name-mem))
-
-      ;; kprobe_multi.syms (offset 24) - pointer to the array of symbol pointers
-      (.set attr-mem C_LONG 24 (.address sym-ptr-array))
-      ;; kprobe_multi.addrs (offset 32) - must be 0 when using syms
-      (.set attr-mem C_LONG 32 (long 0))
-      ;; kprobe_multi.cookies (offset 40) - optional, set to 0
-      (.set attr-mem C_LONG 40 (long 0)))
-
-    (log/debug "BPF_LINK_CREATE kprobe_multi:"
-               "\n  prog_fd:" prog-fd
-               "\n  attach_type:" (const/attach-type->num :trace-kprobe-multi)
-               "\n  function:" function-name
-               "\n  retprobe?:" retprobe?
-               "\n  func_name_mem addr:" (.address func-name-mem)
-               "\n  syms field value:" (.get attr-mem C_LONG 24))
-
-    (let [result (int (bpf-syscall :link-create attr-mem))]
-      (if (< result 0)
-        (let [errno (get-errno)
-              errno-kw (errno->keyword errno)]
-          (log/error "BPF_LINK_CREATE failed for kprobe, errno:" errno errno-kw)
-          (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
-                          {:errno errno
-                           :errno-keyword errno-kw
-                           :function function-name
-                           :retprobe? retprobe?})))
-        (do
-          (log/info "Created BPF link for" (if retprobe? "kretprobe" "kprobe")
-                    "on" function-name "link-fd:" result)
-          result)))))
+      (let [result (int (bpf-syscall :link-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_LINK_CREATE failed for kprobe, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :function function-name
+                             :retprobe? retprobe?})))
+          (do
+            (log/info "Created BPF link for" (if retprobe? "kretprobe" "kprobe")
+                      "on" function-name "link-fd:" result)
+            result))))))
 
 ;; ============================================================================
 ;; BTF (BPF Type Format) Support
@@ -849,46 +874,40 @@
    target_fd and target_btf_id should both be 0. The kernel uses the BTF ID
    that was set during program load."
   [prog-fd btf-id attach-type]
-  (let [attr-mem (allocate-zeroed 128)
-        attach-type-num (const/attach-type->num attach-type)]
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 128)
+          attach-type-num (const/attach-type->num attach-type)]
 
-    ;; Build bpf_attr for BPF_LINK_CREATE with tracing
-    ;; struct bpf_attr for BPF_LINK_CREATE:
-    ;;   prog_fd (offset 0, u32)
-    ;;   target_fd (offset 4, u32) - 0 for vmlinux
-    ;;   attach_type (offset 8, u32)
-    ;;   flags (offset 12, u32)
-    ;;   target_btf_id (offset 16, u32) - 0 if program was loaded with attach_btf_id
+      ;; Build bpf_attr for BPF_LINK_CREATE with tracing
+      ;; prog_fd (offset 0)
+      (.set attr-mem C_INT 0 (int prog-fd))
+      ;; target_fd (offset 4) - 0 for tracing programs
+      (.set attr-mem C_INT 4 (int 0))
+      ;; attach_type (offset 8)
+      (.set attr-mem C_INT 8 (int attach-type-num))
+      ;; flags (offset 12)
+      (.set attr-mem C_INT 12 (int 0))
+      ;; target_btf_id (offset 16) - 0 because program was loaded with attach_btf_id
+      (.set attr-mem C_INT 16 (int 0))
 
-    ;; prog_fd (offset 0)
-    (.set attr-mem C_INT 0 (int prog-fd))
-    ;; target_fd (offset 4) - 0 for tracing programs
-    (.set attr-mem C_INT 4 (int 0))
-    ;; attach_type (offset 8)
-    (.set attr-mem C_INT 8 (int attach-type-num))
-    ;; flags (offset 12)
-    (.set attr-mem C_INT 12 (int 0))
-    ;; target_btf_id (offset 16) - 0 because program was loaded with attach_btf_id
-    (.set attr-mem C_INT 16 (int 0))
+      (log/debug "BPF_LINK_CREATE fentry/fexit:"
+                 "\n  prog_fd:" prog-fd
+                 "\n  attach_type:" attach-type attach-type-num
+                 "\n  target_btf_id: 0 (btf_id was set at load time:" btf-id ")")
 
-    (log/debug "BPF_LINK_CREATE fentry/fexit:"
-               "\n  prog_fd:" prog-fd
-               "\n  attach_type:" attach-type attach-type-num
-               "\n  target_btf_id: 0 (btf_id was set at load time:" btf-id ")")
-
-    (let [result (int (bpf-syscall :link-create attr-mem))]
-      (if (< result 0)
-        (let [errno (get-errno)
-              errno-kw (errno->keyword errno)]
-          (log/error "BPF_LINK_CREATE failed for fentry/fexit, errno:" errno errno-kw)
-          (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
-                          {:errno errno
-                           :errno-keyword errno-kw
-                           :attach-type attach-type
-                           :btf-id btf-id})))
-        (do
-          (log/info "Created BPF link for" attach-type "btf-id:" btf-id "link-fd:" result)
-          result)))))
+      (let [result (int (bpf-syscall :link-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_LINK_CREATE failed for fentry/fexit, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :attach-type attach-type
+                             :btf-id btf-id})))
+          (do
+            (log/info "Created BPF link for" attach-type "btf-id:" btf-id "link-fd:" result)
+            result))))))
 
 ;; Close file descriptor
 (def ^:private close-fn
@@ -1143,72 +1162,73 @@
                  repeat 1
                  flags 0
                  cpu 0}}]
-  (let [;; Calculate sizes
-        data-in-size (if data-in (count data-in) 0)
-        data-out-size (or data-size-out (max data-in-size 256))
-        ctx-in-size (if ctx-in (count ctx-in) 0)
-        ctx-out-size (or ctx-size-out 0)
+  (with-bpf-syscall
+    (let [;; Calculate sizes
+          data-in-size (if data-in (count data-in) 0)
+          data-out-size (or data-size-out (max data-in-size 256))
+          ctx-in-size (if ctx-in (count ctx-in) 0)
+          ctx-out-size (or ctx-size-out 0)
 
-        ;; Allocate memory segments
-        data-in-mem (when (pos? data-in-size)
-                      (let [mem (allocate-zeroed data-in-size)]
-                        (MemorySegment/copy (MemorySegment/ofArray data-in) 0
-                                           mem 0 data-in-size)
-                        mem))
-        data-out-mem (when (pos? data-out-size)
-                       (allocate-zeroed data-out-size))
-        ctx-in-mem (when (pos? ctx-in-size)
-                     (let [mem (allocate-zeroed ctx-in-size)]
-                       (MemorySegment/copy (MemorySegment/ofArray ctx-in) 0
-                                          mem 0 ctx-in-size)
-                       mem))
-        ctx-out-mem (when (pos? ctx-out-size)
-                      (allocate-zeroed ctx-out-size))
+          ;; Allocate memory segments
+          data-in-mem (when (pos? data-in-size)
+                        (let [mem (allocate-zeroed data-in-size)]
+                          (MemorySegment/copy (MemorySegment/ofArray data-in) 0
+                                             mem 0 data-in-size)
+                          mem))
+          data-out-mem (when (pos? data-out-size)
+                         (allocate-zeroed data-out-size))
+          ctx-in-mem (when (pos? ctx-in-size)
+                       (let [mem (allocate-zeroed ctx-in-size)]
+                         (MemorySegment/copy (MemorySegment/ofArray ctx-in) 0
+                                            mem 0 ctx-in-size)
+                         mem))
+          ctx-out-mem (when (pos? ctx-out-size)
+                        (allocate-zeroed ctx-out-size))
 
-        ;; Build attr structure
-        attr (->ProgTestRunAttr
-              prog-fd
-              0                    ; retval (output)
-              data-in-size
-              data-out-size
-              data-in-mem
-              data-out-mem
-              repeat
-              0                    ; duration (output)
-              ctx-in-size
-              ctx-out-size
-              ctx-in-mem
-              ctx-out-mem
-              flags
-              cpu)
-        attr-mem (prog-test-run-attr->segment attr)]
+          ;; Build attr structure
+          attr (->ProgTestRunAttr
+                prog-fd
+                0                    ; retval (output)
+                data-in-size
+                data-out-size
+                data-in-mem
+                data-out-mem
+                repeat
+                0                    ; duration (output)
+                ctx-in-size
+                ctx-out-size
+                ctx-in-mem
+                ctx-out-mem
+                flags
+                cpu)
+          attr-mem (prog-test-run-attr->segment attr)]
 
-    ;; Execute syscall
-    (bpf-syscall :prog-test-run attr-mem)
+      ;; Execute syscall
+      (bpf-syscall :prog-test-run attr-mem)
 
-    ;; Read results from attr structure
-    (let [retval (.get attr-mem C_INT 4)
-          actual-data-size-out (.get attr-mem C_INT 12)
-          duration (.get attr-mem C_INT 36)
-          actual-ctx-size-out (.get attr-mem C_INT 44)
+      ;; Read results from attr structure
+      (let [retval (.get attr-mem C_INT 4)
+            actual-data-size-out (.get attr-mem C_INT 12)
+            duration (.get attr-mem C_INT 36)
+            actual-ctx-size-out (.get attr-mem C_INT 44)
 
-          ;; Extract output data
-          data-out (when (and data-out-mem (pos? actual-data-size-out))
-                     (let [out (byte-array actual-data-size-out)]
-                       (MemorySegment/copy data-out-mem 0
-                                          (MemorySegment/ofArray out) 0
-                                          actual-data-size-out)
-                       out))
-          ctx-out (when (and ctx-out-mem (pos? actual-ctx-size-out))
-                    (let [out (byte-array actual-ctx-size-out)]
-                      (MemorySegment/copy ctx-out-mem 0
-                                         (MemorySegment/ofArray out) 0
-                                         actual-ctx-size-out)
-                      out))]
+            ;; Extract output data
+            data-out (when (and data-out-mem (pos? actual-data-size-out))
+                       (let [out (byte-array actual-data-size-out)]
+                         (MemorySegment/copy data-out-mem 0
+                                            (MemorySegment/ofArray out) 0
+                                            actual-data-size-out)
+                         out))
+            ctx-out (when (and ctx-out-mem (pos? actual-ctx-size-out))
+                      (let [out (byte-array actual-ctx-size-out)]
+                        (MemorySegment/copy ctx-out-mem 0
+                                           (MemorySegment/ofArray out) 0
+                                           actual-ctx-size-out)
+                        out))]
 
-      {:retval retval
-       :data-out data-out
-       :data-size-out actual-data-size-out
-       :ctx-out ctx-out
-       :ctx-size-out actual-ctx-size-out
-       :duration-ns duration})))
+        {:retval retval
+         :data-out data-out
+         :data-size-out actual-data-size-out
+         :ctx-out ctx-out
+         :ctx-size-out actual-ctx-size-out
+         :duration-ns duration}))))

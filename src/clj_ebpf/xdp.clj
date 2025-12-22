@@ -12,16 +12,17 @@
 ;; Network Interface Utilities
 ;; ============================================================================
 
-(def ^:private ^Arena default-arena (Arena/ofAuto))
+;; Shared arena for libc library lookups - must persist for JVM lifetime
+(def ^:private ^Arena libc-arena (Arena/ofShared))
 (def ^:private ^Linker linker (Linker/nativeLinker))
 
 ;; Libc lookup - try common paths
 (def ^:private libc-lookup
   (or
    ;; Try common libc paths on Linux
-   (try (SymbolLookup/libraryLookup "/lib/x86_64-linux-gnu/libc.so.6" default-arena) (catch Exception _ nil))
-   (try (SymbolLookup/libraryLookup "libc.so.6" default-arena) (catch Exception _ nil))
-   (try (SymbolLookup/libraryLookup "c" default-arena) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "/lib/x86_64-linux-gnu/libc.so.6" libc-arena) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "libc.so.6" libc-arena) (catch Exception _ nil))
+   (try (SymbolLookup/libraryLookup "c" libc-arena) (catch Exception _ nil))
    ;; Fallback to loader lookup
    (SymbolLookup/loaderLookup)))
 
@@ -56,11 +57,12 @@
   [^String ifname]
   (when-not if-nametoindex-handle
     (throw (ex-info "if_nametoindex not available" {})))
-  (let [name-seg (utils/string->segment ifname)
-        result (.invokeWithArguments if-nametoindex-handle [name-seg])]
-    (when (zero? result)
-      (throw (ex-info "Interface not found" {:interface ifname})))
-    result))
+  (utils/with-bpf-arena
+    (let [name-seg (utils/string->segment ifname)
+          result (.invokeWithArguments if-nametoindex-handle [name-seg])]
+      (when (zero? result)
+        (throw (ex-info "Interface not found" {:interface ifname})))
+      result)))
 
 (defn interface-index->name
   "Get network interface name from index.
@@ -69,11 +71,12 @@
   [ifindex]
   (when-not if-indextoname-handle
     (throw (ex-info "if_indextoname not available" {})))
-  (let [buf (.allocate default-arena 16 1) ; IF_NAMESIZE = 16
-        result (.invokeWithArguments if-indextoname-handle [(int ifindex) buf])]
-    (when (= result MemorySegment/NULL)
-      (throw (ex-info "Interface index not found" {:ifindex ifindex})))
-    (utils/segment->string buf 16)))
+  (utils/with-bpf-arena
+    (let [buf (utils/allocate-memory 16) ; IF_NAMESIZE = 16
+          result (.invokeWithArguments if-indextoname-handle [(int ifindex) buf])]
+      (when (= result MemorySegment/NULL)
+        (throw (ex-info "Interface index not found" {:ifindex ifindex})))
+      (utils/segment->string buf 16))))
 
 ;; ============================================================================
 ;; Netlink Communication for XDP
@@ -247,28 +250,29 @@
                   ifname)
         xdp-flags-val (if (seq flags)
                        (const/flags->bits const/xdp-flags flags)
-                       (:drv-mode const/xdp-flags)) ; Default to driver mode
+                       (:drv-mode const/xdp-flags))] ; Default to driver mode
 
-        ;; Create netlink socket
-        sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+    (utils/with-bpf-arena
+      ;; Create netlink socket
+      (let [sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
 
-    (try
-      ;; Bind socket
-      (bind-netlink sock-fd)
+        (try
+          ;; Bind socket
+          (bind-netlink sock-fd)
 
-      ;; Build and send message
-      (let [msg (build-netlink-msg ifindex prog-fd xdp-flags-val)]
-        (send-netlink sock-fd msg)
+          ;; Build and send message
+          (let [msg (build-netlink-msg ifindex prog-fd xdp-flags-val)]
+            (send-netlink sock-fd msg)
 
-        ;; Receive ACK
-        (let [response (recv-netlink sock-fd 4096)]
-          (parse-netlink-ack response)))
+            ;; Receive ACK
+            (let [response (recv-netlink sock-fd 4096)]
+              (parse-netlink-ack response)))
 
-      ifindex
+          ifindex
 
-      (finally
-        ;; Close socket
-        (syscall/close-fd sock-fd)))))
+          (finally
+            ;; Close socket
+            (syscall/close-fd sock-fd)))))))
 
 (defn detach-xdp
   "Detach XDP program from a network interface.
@@ -288,28 +292,29 @@
                        (:drv-mode const/xdp-flags)) ; Default to driver mode
 
         ;; Use -1 as prog-fd to detach
-        prog-fd -1
+        prog-fd -1]
 
-        ;; Create netlink socket
-        sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+    (utils/with-bpf-arena
+      ;; Create netlink socket
+      (let [sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
 
-    (try
-      ;; Bind socket
-      (bind-netlink sock-fd)
+        (try
+          ;; Bind socket
+          (bind-netlink sock-fd)
 
-      ;; Build and send message
-      (let [msg (build-netlink-msg ifindex prog-fd xdp-flags-val)]
-        (send-netlink sock-fd msg)
+          ;; Build and send message
+          (let [msg (build-netlink-msg ifindex prog-fd xdp-flags-val)]
+            (send-netlink sock-fd msg)
 
-        ;; Receive ACK
-        (let [response (recv-netlink sock-fd 4096)]
-          (parse-netlink-ack response)))
+            ;; Receive ACK
+            (let [response (recv-netlink sock-fd 4096)]
+              (parse-netlink-ack response)))
 
-      ifindex
+          ifindex
 
-      (finally
-        ;; Close socket
-        (syscall/close-fd sock-fd)))))
+          (finally
+            ;; Close socket
+            (syscall/close-fd sock-fd)))))))
 
 ;; ============================================================================
 ;; XDP Program Loading Helpers

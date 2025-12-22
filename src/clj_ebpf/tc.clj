@@ -223,24 +223,25 @@
   Example:
     (add-clsact-qdisc \"eth0\")"
   [ifname]
-  (let [ifindex (if (string? ifname)
-                  (xdp/interface-name->index ifname)
-                  ifname)
-        sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+  (utils/with-bpf-arena
+    (let [ifindex (if (string? ifname)
+                    (xdp/interface-name->index ifname)
+                    ifname)
+          sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
 
-    (try
-      (bind-netlink sock-fd)
+      (try
+        (bind-netlink sock-fd)
 
-      (let [msg (build-qdisc-msg RTM_NEWQDISC ifindex
-                                 (bit-or NLM_F_REQUEST NLM_F_ACK NLM_F_CREATE NLM_F_EXCL))]
-        (send-netlink sock-fd msg)
-        (let [response (recv-netlink sock-fd 4096)]
-          (parse-netlink-ack response)))
+        (let [msg (build-qdisc-msg RTM_NEWQDISC ifindex
+                                   (bit-or NLM_F_REQUEST NLM_F_ACK NLM_F_CREATE NLM_F_EXCL))]
+          (send-netlink sock-fd msg)
+          (let [response (recv-netlink sock-fd 4096)]
+            (parse-netlink-ack response)))
 
-      ifindex
+        ifindex
 
-      (finally
-        (syscall/close-fd sock-fd)))))
+        (finally
+          (syscall/close-fd sock-fd))))))
 
 (defn remove-clsact-qdisc
   "Remove clsact qdisc from a network interface.
@@ -253,24 +254,25 @@
   Example:
     (remove-clsact-qdisc \"eth0\")"
   [ifname]
-  (let [ifindex (if (string? ifname)
-                  (xdp/interface-name->index ifname)
-                  ifname)
-        sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+  (utils/with-bpf-arena
+    (let [ifindex (if (string? ifname)
+                    (xdp/interface-name->index ifname)
+                    ifname)
+          sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
 
-    (try
-      (bind-netlink sock-fd)
+      (try
+        (bind-netlink sock-fd)
 
-      (let [msg (build-qdisc-msg RTM_DELQDISC ifindex
-                                 (bit-or NLM_F_REQUEST NLM_F_ACK))]
-        (send-netlink sock-fd msg)
-        (let [response (recv-netlink sock-fd 4096)]
-          (parse-netlink-ack response)))
+        (let [msg (build-qdisc-msg RTM_DELQDISC ifindex
+                                   (bit-or NLM_F_REQUEST NLM_F_ACK))]
+          (send-netlink sock-fd msg)
+          (let [response (recv-netlink sock-fd 4096)]
+            (parse-netlink-ack response)))
 
-      ifindex
+        ifindex
 
-      (finally
-        (syscall/close-fd sock-fd)))))
+        (finally
+          (syscall/close-fd sock-fd))))))
 
 ;; ============================================================================
 ;; TC Filter Attachment
@@ -361,20 +363,21 @@
           (when-not (= 17 (:errno (ex-data e)))
             (throw e)))))
 
-    (let [sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
-      (try
-        (bind-netlink sock-fd)
+    (utils/with-bpf-arena
+      (let [sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+        (try
+          (bind-netlink sock-fd)
 
-        (let [msg (build-filter-msg RTM_NEWTFILTER ifindex direction prog-fd prog-name priority
-                                   (bit-or NLM_F_REQUEST NLM_F_ACK NLM_F_CREATE NLM_F_EXCL))]
-          (send-netlink sock-fd msg)
-          (let [response (recv-netlink sock-fd 4096)]
-            (parse-netlink-ack response)))
+          (let [msg (build-filter-msg RTM_NEWTFILTER ifindex direction prog-fd prog-name priority
+                                     (bit-or NLM_F_REQUEST NLM_F_ACK NLM_F_CREATE NLM_F_EXCL))]
+            (send-netlink sock-fd msg)
+            (let [response (recv-netlink sock-fd 4096)]
+              (parse-netlink-ack response)))
 
-        {:ifindex ifindex :direction direction :priority priority}
+          {:ifindex ifindex :direction direction :priority priority}
 
-        (finally
-          (syscall/close-fd sock-fd))))))
+          (finally
+            (syscall/close-fd sock-fd)))))))
 
 (defn detach-tc-filter
   "Detach TC BPF filter from a network interface.
@@ -391,24 +394,25 @@
     (let [info (attach-tc-filter \"eth0\" prog-fd :ingress)]
       (detach-tc-filter (:ifindex info) (:direction info) (:priority info)))"
   [ifname direction priority]
-  (let [ifindex (if (string? ifname)
-                  (xdp/interface-name->index ifname)
-                  ifname)
-        sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
+  (utils/with-bpf-arena
+    (let [ifindex (if (string? ifname)
+                    (xdp/interface-name->index ifname)
+                    ifname)
+          sock-fd (socket AF_NETLINK SOCK_RAW NETLINK_ROUTE)]
 
-    (try
-      (bind-netlink sock-fd)
+      (try
+        (bind-netlink sock-fd)
 
-      (let [msg (build-filter-msg RTM_DELTFILTER ifindex direction -1 "" priority
-                                 (bit-or NLM_F_REQUEST NLM_F_ACK))]
-        (send-netlink sock-fd msg)
-        (let [response (recv-netlink sock-fd 4096)]
-          (parse-netlink-ack response)))
+        (let [msg (build-filter-msg RTM_DELTFILTER ifindex direction -1 "" priority
+                                   (bit-or NLM_F_REQUEST NLM_F_ACK))]
+          (send-netlink sock-fd msg)
+          (let [response (recv-netlink sock-fd 4096)]
+            (parse-netlink-ack response)))
 
-      ifindex
+        ifindex
 
-      (finally
-        (syscall/close-fd sock-fd)))))
+        (finally
+          (syscall/close-fd sock-fd))))))
 
 ;; ============================================================================
 ;; TC Program Loading Helpers

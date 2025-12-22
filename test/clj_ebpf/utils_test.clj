@@ -29,45 +29,51 @@
 
 (deftest test-segment-operations
   (testing "Integer to/from segment"
-    (let [value 42
-          seg (utils/int->segment value)
-          decoded (utils/segment->int seg)]
-      (is (instance? MemorySegment seg))
-      (is (= value decoded))))
+    (utils/with-bpf-arena
+      (let [value 42
+            seg (utils/int->segment value)
+            decoded (utils/segment->int seg)]
+        (is (instance? MemorySegment seg))
+        (is (= value decoded)))))
 
   (testing "Long to/from segment"
-    (let [value 123456789
-          seg (utils/long->segment value)
-          decoded (utils/segment->long seg)]
-      (is (instance? MemorySegment seg))
-      (is (= value decoded))))
+    (utils/with-bpf-arena
+      (let [value 123456789
+            seg (utils/long->segment value)
+            decoded (utils/segment->long seg)]
+        (is (instance? MemorySegment seg))
+        (is (= value decoded)))))
 
   (testing "Bytes to/from segment"
-    (let [bytes (byte-array [1 2 3 4 5])
-          seg (utils/bytes->segment bytes)
-          decoded (utils/segment->bytes seg 5)]
-      (is (instance? MemorySegment seg))
-      (is (= (seq bytes) (seq decoded))))))
+    (utils/with-bpf-arena
+      (let [bytes (byte-array [1 2 3 4 5])
+            seg (utils/bytes->segment bytes)
+            decoded (utils/segment->bytes seg 5)]
+        (is (instance? MemorySegment seg))
+        (is (= (seq bytes) (seq decoded)))))))
 
 (deftest test-string-operations
   (testing "String to/from segment"
-    (let [s "Hello, BPF!"
-          seg (utils/string->segment s)
-          decoded (utils/segment->string seg 100)]
-      (is (instance? MemorySegment seg))
-      (is (= s decoded)))))
+    (utils/with-bpf-arena
+      (let [s "Hello, BPF!"
+            seg (utils/string->segment s)
+            decoded (utils/segment->string seg 100)]
+        (is (instance? MemorySegment seg))
+        (is (= s decoded))))))
 
 (deftest test-memory-allocation
   (testing "Allocate memory"
-    (let [mem (utils/allocate-memory 128)]
-      (is (instance? MemorySegment mem))))
+    (utils/with-bpf-arena
+      (let [mem (utils/allocate-memory 128)]
+        (is (instance? MemorySegment mem)))))
 
   (testing "Zero memory"
-    (let [mem (utils/allocate-memory 16)
-          ;; Fill with 0xff using MemorySegment API
-          _ (.fill mem (unchecked-byte 0xff))
-          _ (utils/zero-memory mem 16)]
-      (is (every? zero? (seq (utils/segment->bytes mem 16)))))))
+    (utils/with-bpf-arena
+      (let [mem (utils/allocate-memory 16)
+            ;; Fill with 0xff using MemorySegment API
+            _ (.fill mem (unchecked-byte 0xff))
+            _ (utils/zero-memory mem 16)]
+        (is (every? zero? (seq (utils/segment->bytes mem 16))))))))
 
 (deftest test-struct-packing
   (testing "Pack struct"

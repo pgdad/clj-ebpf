@@ -46,54 +46,55 @@
          license "GPL"
          kern-version (utils/get-kernel-version)
          prog-flags 0}}]
-  (let [;; Convert insns to memory segment if needed
-        insns-seg (if (instance? MemorySegment insns)
-                   insns
-                   (utils/bytes->segment insns))
-        ;; Calculate instruction count (each BPF insn is 8 bytes)
-        insn-cnt (or insn-count
-                    (if (instance? MemorySegment insns)
-                      (throw (ex-info "Must provide :insn-count when :insns is a MemorySegment"
-                                     {:insns insns}))
-                      (/ (count insns) 8)))
-        ;; Allocate log buffer
-        log-buf (utils/allocate-memory const/BPF_LOG_BUF_SIZE)
-        _ (utils/zero-memory log-buf const/BPF_LOG_BUF_SIZE)
+  (utils/with-bpf-arena
+    (let [;; Convert insns to memory segment if needed
+          insns-seg (if (instance? MemorySegment insns)
+                     insns
+                     (utils/bytes->segment insns))
+          ;; Calculate instruction count (each BPF insn is 8 bytes)
+          insn-cnt (or insn-count
+                      (if (instance? MemorySegment insns)
+                        (throw (ex-info "Must provide :insn-count when :insns is a MemorySegment"
+                                       {:insns insns}))
+                        (/ (count insns) 8)))
+          ;; Allocate log buffer
+          log-buf (utils/allocate-memory const/BPF_LOG_BUF_SIZE)
+          _ (utils/zero-memory log-buf const/BPF_LOG_BUF_SIZE)
 
-        ;; Load the program
-        fd (try
-             (syscall/prog-load
-               {:prog-type prog-type
-                :insn-cnt insn-cnt
-                :insns insns-seg
-                :license license
-                :log-level log-level
-                :log-size const/BPF_LOG_BUF_SIZE
-                :log-buf log-buf
-                :kern-version kern-version
-                :prog-flags prog-flags
-                :prog-name prog-name
-                :expected-attach-type (when expected-attach-type
-                                       (const/attach-type->num expected-attach-type))
-                :prog-btf-fd prog-btf-fd
-                :attach-btf-id attach-btf-id})
-             (catch clojure.lang.ExceptionInfo e
-               ;; Extract verifier log
-               (let [log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)]
-                 (log/error "BPF program load failed. Verifier log:\n" log-str)
-                 (throw (ex-info "BPF program load failed"
-                                (assoc (ex-data e) :verifier-log log-str))))))
+          ;; Load the program
+          fd (try
+               (syscall/prog-load
+                 {:prog-type prog-type
+                  :insn-cnt insn-cnt
+                  :insns insns-seg
+                  :license license
+                  :log-level log-level
+                  :log-size const/BPF_LOG_BUF_SIZE
+                  :log-buf log-buf
+                  :kern-version kern-version
+                  :prog-flags prog-flags
+                  :prog-name prog-name
+                  :expected-attach-type (when expected-attach-type
+                                         (const/attach-type->num expected-attach-type))
+                  :prog-btf-fd prog-btf-fd
+                  :attach-btf-id attach-btf-id})
+               (catch clojure.lang.ExceptionInfo e
+                 ;; Extract verifier log
+                 (let [log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)]
+                   (log/error "BPF program load failed. Verifier log:\n" log-str)
+                   (throw (ex-info "BPF program load failed"
+                                  (assoc (ex-data e) :verifier-log log-str))))))
 
-        ;; Get verifier log even on success
-        log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)
-        log-str (when (and log-str (not (str/blank? log-str)))
-                  (str/trim log-str))]
+          ;; Get verifier log even on success
+          log-str (utils/segment->string log-buf const/BPF_LOG_BUF_SIZE)
+          log-str (when (and log-str (not (str/blank? log-str)))
+                    (str/trim log-str))]
 
-    (when (and log-str (> log-level 0))
-      (log/debug "Verifier log for" prog-name ":\n" log-str))
+      (when (and log-str (> log-level 0))
+        (log/debug "Verifier log for" prog-name ":\n" log-str))
 
-    (log/info "Loaded BPF program:" prog-name "type:" prog-type "fd:" fd)
-    (->BpfProgram fd prog-type prog-name insn-cnt license log-str [])))
+      (log/info "Loaded BPF program:" prog-name "type:" prog-type "fd:" fd)
+      (->BpfProgram fd prog-type prog-name insn-cnt license log-str []))))
 
 (defn close-program
   "Close a BPF program and detach all attachments"
