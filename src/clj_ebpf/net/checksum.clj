@@ -16,9 +16,10 @@
 (def BPF-FUNC-csum-update 40)
 
 ;; Checksum flags
-(def BPF-F-PSEUDO-HDR 0x10)     ; Update pseudo-header checksum
-(def BPF-F-MARK-MANGLED-0 0x20) ; Mark checksum as mangled
-(def BPF-F-MARK-ENFORCE 0x40)   ; Enforce checksum verification
+(def ^:const BPF-F-RECOMPUTE-CSUM 0x01) ; Recompute full checksum (expensive)
+(def ^:const BPF-F-PSEUDO-HDR 0x10)     ; Update pseudo-header checksum
+(def ^:const BPF-F-MARK-MANGLED-0 0x20) ; Mark checksum as mangled
+(def ^:const BPF-F-MARK-ENFORCE 0x40)   ; Enforce checksum verification
 
 ;; ============================================================================
 ;; L3 (IP) Checksum Helpers - TC/SKB Programs
@@ -244,3 +245,69 @@
   [csum-reg]
   [(dsl/xor-op csum-reg 0xFFFF)
    (dsl/and csum-reg 0xFFFF)])
+
+;; ============================================================================
+;; Issue #4 API Aliases (build-* naming convention)
+;; ============================================================================
+
+(def build-l3-csum-replace
+  "Alias for l3-csum-replace-4.
+   Generate incremental IP header checksum update.
+
+   Used when modifying IP header fields (e.g., TTL, addresses for NAT).
+
+   Args:
+     ctx-reg: Register containing skb pointer
+     csum-off: Byte offset of checksum field in packet
+     old-reg: Register containing old value
+     new-reg: Register containing new value
+
+   Returns: Vector of instructions, result in r0 (0 on success)"
+  l3-csum-replace-4)
+
+(defn build-l4-csum-replace
+  "Generate incremental L4 (TCP/UDP) checksum update.
+
+   Used when modifying IP addresses or L4 ports. For IP address changes,
+   use BPF-F-PSEUDO-HDR flag to account for pseudo-header.
+
+   Args:
+     ctx-reg: Register containing skb pointer
+     csum-off: Byte offset of L4 checksum field in packet
+     old-reg: Register containing old value
+     new-reg: Register containing new value
+     flags: BPF_F flags:
+            - 0: Simple value replacement
+            - BPF-F-PSEUDO-HDR (0x10): Account for IP pseudo-header
+            - BPF-F-RECOMPUTE-CSUM (0x01): Recompute full checksum
+
+   Returns: Vector of instructions"
+  [ctx-reg csum-off old-reg new-reg flags]
+  [(dsl/mov-reg :r1 ctx-reg)
+   (dsl/mov :r2 csum-off)
+   (dsl/mov-reg :r3 old-reg)
+   (dsl/mov-reg :r4 new-reg)
+   (dsl/mov :r5 (bit-or 4 flags))  ; size=4 + additional flags
+   (dsl/call BPF-FUNC-l4-csum-replace)])
+
+(defn build-csum-diff
+  "Generate bpf_csum_diff call for computing checksum difference.
+
+   Lower-level helper for complex checksum updates (e.g., when replacing
+   multiple fields or entire headers).
+
+   Args:
+     old-ptr-reg: Register with pointer to old data (or 0)
+     old-size: Size of old data (or 0)
+     new-ptr-reg: Register with pointer to new data (or 0)
+     new-size: Size of new data (or 0)
+     seed: Initial checksum value (0 for new calculation)
+
+   Returns: Vector of instructions, result in r0 (checksum delta)"
+  [old-ptr-reg old-size new-ptr-reg new-size seed]
+  [(dsl/mov-reg :r1 old-ptr-reg)
+   (dsl/mov :r2 old-size)
+   (dsl/mov-reg :r3 new-ptr-reg)
+   (dsl/mov :r4 new-size)
+   (dsl/mov :r5 seed)
+   (dsl/call BPF-FUNC-csum-diff)])
