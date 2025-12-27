@@ -62,7 +62,7 @@
     (is (= (arch/get-syscall-nr :bpf) const/BPF_SYSCALL_NR))
     (is (= 16 const/BPF_OBJ_NAME_LEN))
     (is (= 8 const/BPF_TAG_SIZE))
-    (is (= (* 256 1024) const/BPF_LOG_BUF_SIZE))))
+    (is (= (* 16 1024 1024) const/BPF_LOG_BUF_SIZE))))
 
 (deftest test-architecture-detection
   (testing "Architecture is detected and supported"
