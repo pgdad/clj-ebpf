@@ -493,7 +493,7 @@
 ;; Maximum sizes
 (def ^:const BPF_OBJ_NAME_LEN 16)
 (def ^:const BPF_TAG_SIZE 8)
-(def ^:const BPF_LOG_BUF_SIZE (* 256 1024)) ; 256KB verifier log buffer
+(def ^:const BPF_LOG_BUF_SIZE (* 16 1024 1024)) ; 16MB verifier log buffer
 
 ;; Utility functions
 (defn cmd->num
