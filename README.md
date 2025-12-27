@@ -89,7 +89,17 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - BTF-based field resolution
   - DSL helpers for generating relocatable code
   - Portable BPF programs across kernel versions
-- ✅ **285+ tests with comprehensive assertions - all passing**
+- ✅ **BPF Helper Functions Library**
+  - Packet bounds checking (Ethernet, IPv4, TCP, UDP, custom)
+  - L3/L4 checksum calculation for NAT and load balancing
+  - Ring buffer operations (reserve, submit, discard, output, query)
+  - IPv6 address loading and comparison (128-bit handling)
+  - Time helpers (ktime_get_ns, boot time, coarse time)
+  - Random number generation and probabilistic sampling
+  - Token bucket rate limiting for DDoS protection
+  - Memory operations (zero, copy, struct initialization)
+  - BPF map helpers for in-program map operations
+- ✅ **728 tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
 - ✅ **XDP (eXpress Data Path) support** (network interface utilities, attachment/detachment)
@@ -101,6 +111,7 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
 - ✅ **BTF (BPF Type Format) support** (complete)
 - ✅ **BPF assembly DSL** (complete)
 - ✅ **CO-RE (Compile Once - Run Everywhere)** (complete)
+- ✅ **BPF Helper Functions Library** (complete)
 - ⏳ C compilation integration
 
 ## Requirements
@@ -1613,6 +1624,227 @@ The `clj-ebpf.examples` namespace provides 25+ ready-to-use example programs dem
 ```
 
 **Note:** The DSL generates raw BPF bytecode that must pass kernel verifier checks. Complex programs may need careful register management and bounds checking.
+
+### BPF Helper Functions Library
+
+clj-ebpf includes a comprehensive library of helper functions for common BPF programming tasks. These helpers generate verified, optimized BPF instructions that integrate seamlessly with the DSL.
+
+```clojure
+(require '[clj-ebpf.helpers.bounds :as bounds]
+         '[clj-ebpf.helpers.checksum :as checksum]
+         '[clj-ebpf.helpers.ringbuf :as ringbuf]
+         '[clj-ebpf.helpers.ipv6 :as ipv6]
+         '[clj-ebpf.helpers.time :as time]
+         '[clj-ebpf.helpers.rate-limit :as rate-limit]
+         '[clj-ebpf.helpers.memory :as memory]
+         '[clj-ebpf.maps.helpers :as map-helpers])
+```
+
+#### Packet Bounds Checking
+
+Essential for BPF verifier compliance when accessing packet data:
+
+```clojure
+;; Check Ethernet header bounds (14 bytes)
+(bounds/check-eth-header :r6 :r7 :drop)
+
+;; Check IPv4 header bounds (20 bytes minimum)
+(bounds/check-ipv4-header :r6 :r7 :drop)
+
+;; Check TCP header bounds (20 bytes minimum)
+(bounds/check-tcp-header :r6 :r7 :drop)
+
+;; Check UDP header bounds (8 bytes)
+(bounds/check-udp-header :r6 :r7 :drop)
+
+;; Custom bounds check (14-byte Ethernet + 20-byte IP = 34 bytes)
+(bounds/build-bounds-check :r6 :r7 0 34 :drop)
+```
+
+#### Checksum Calculation
+
+L3/L4 checksum helpers for NAT, load balancing, and packet modification:
+
+```clojure
+;; Incremental checksum update (RFC 1624)
+(checksum/csum-update :r1 :r2 :r3)  ; old-val, new-val, old-csum -> new-csum
+
+;; Differential checksum (for modifying multiple fields)
+(checksum/csum-diff :r2 4 :r3 4 :r4)  ; from-ptr, from-size, to-ptr, to-size, seed
+
+;; Replace checksum field in packet
+(checksum/csum-replace :r1 10 :r0)  ; base-reg, offset, new-csum
+
+;; Complete NAT checksum update sequence
+(checksum/nat-csum-update :r1 :r2 :r3 :r4 16)
+```
+
+#### Ring Buffer Operations
+
+Modern event streaming (kernel 5.8+, preferred over perf buffers):
+
+```clojure
+;; Reserve space in ring buffer
+(ringbuf/reserve :r1 64 0)  ; map-fd-reg, size, flags
+
+;; Submit reserved data
+(ringbuf/submit :r0 0)  ; data-ptr, flags
+
+;; Discard reserved data
+(ringbuf/discard :r0 0)
+
+;; Output data directly (reserve + copy + submit)
+(ringbuf/output :r1 :r2 64 0)  ; map-fd-reg, data-ptr, size, flags
+
+;; Query ring buffer state
+(ringbuf/query :r1 ringbuf/BPF-RB-AVAIL-DATA)  ; Returns available bytes
+```
+
+#### IPv6 Address Loading
+
+Efficient 128-bit IPv6 address handling:
+
+```clojure
+;; Load source IPv6 address to stack
+(ipv6/build-load-ipv6-src :r6 -32)  ; ip-hdr-reg, stack-offset
+
+;; Load destination IPv6 address to stack
+(ipv6/build-load-ipv6-dst :r6 -48)
+
+;; Compare two IPv6 addresses
+(ipv6/build-ipv6-compare -32 -48 :match :no-match)
+
+;; Check for IPv4-mapped IPv6 address (::ffff:x.x.x.x)
+(ipv6/build-check-ipv4-mapped -32 :is-mapped :not-mapped)
+```
+
+#### Time and Random Numbers
+
+Timestamps and random values for rate limiting and sampling:
+
+```clojure
+;; Get current time in nanoseconds (monotonic)
+(time/ktime-get-ns)  ; Result in r0
+
+;; Get boot time in nanoseconds
+(time/ktime-get-boot-ns)
+
+;; Get coarse time (faster, less precise)
+(time/ktime-get-coarse-ns)
+
+;; Get random 32-bit value
+(time/get-prandom-u32)  ; Result in r0
+
+;; Probabilistic sampling (1 in N)
+(time/build-sample-check 100 :sample :skip)  ; 1% sampling
+```
+
+#### Token Bucket Rate Limiting
+
+DDoS protection and traffic shaping:
+
+```clojure
+;; Initialize rate limiter state on stack
+(rate-limit/init-state -24)  ; stack-offset for 24-byte state
+
+;; Check rate limit (returns allow/deny)
+(rate-limit/check :r6       ; map-fd register
+                  :r7       ; key register
+                  1000      ; tokens per interval
+                  1000000000 ; interval (1 second in ns)
+                  100       ; burst size
+                  :allow    ; label if allowed
+                  :deny)    ; label if denied
+
+;; Update token bucket after allowing packet
+(rate-limit/update-tokens :r6 :r7 -24)
+```
+
+#### Memory Operations
+
+Safe memory initialization and copying:
+
+```clojure
+;; Zero memory region on stack
+(memory/zero-stack -64 64)  ; offset, size
+
+;; Zero memory at pointer
+(memory/zero-memory :r1 32)  ; ptr-reg, size
+
+;; Copy memory between stack locations
+(memory/copy-stack -32 -64 16)  ; dest-offset, src-offset, size
+
+;; Initialize struct with zeros
+(memory/init-struct -48 {:field1 4 :field2 8 :field3 4})
+```
+
+#### BPF Map Helpers (In-Program Operations)
+
+Map operations from within BPF programs:
+
+```clojure
+;; Look up value in map
+(map-helpers/lookup :r1 :r2)  ; map-fd-reg, key-ptr -> value-ptr in r0
+
+;; Update map entry
+(map-helpers/update :r1 :r2 :r3 0)  ; map-fd, key-ptr, val-ptr, flags
+
+;; Delete map entry
+(map-helpers/delete :r1 :r2)  ; map-fd, key-ptr
+
+;; Atomic increment counter in map
+(map-helpers/atomic-inc :r1 :r2 1)  ; map-fd, key-ptr, increment
+
+;; Look up or create entry
+(map-helpers/lookup-or-init :r1 :r2 :r3)  ; map-fd, key-ptr, init-val-ptr
+```
+
+#### Complete Example: XDP Firewall
+
+```clojure
+(require '[clj-ebpf.dsl :as dsl]
+         '[clj-ebpf.asm :as asm]
+         '[clj-ebpf.helpers.bounds :as bounds]
+         '[clj-ebpf.helpers.checksum :as checksum])
+
+(def xdp-firewall
+  (asm/assemble-with-labels
+    (concat
+      ;; Load packet pointers
+      [(dsl/ldx :w :r6 :r1 0)    ; r6 = data
+       (dsl/ldx :w :r7 :r1 4)]   ; r7 = data_end
+
+      ;; Bounds check for Ethernet + IP headers
+      (bounds/build-bounds-check :r6 :r7 0 34 :drop)
+
+      ;; Check EtherType == IPv4 (0x0800)
+      [(dsl/ldx :h :r2 :r6 12)
+       (asm/jmp-imm :jne :r2 0x0008 :drop)]  ; Network byte order
+
+      ;; Check IP protocol == TCP (6)
+      [(dsl/ldx :b :r2 :r6 23)
+       (asm/jmp-imm :jne :r2 6 :pass)]
+
+      ;; Allow TCP traffic
+      [[:label :pass]
+       (dsl/mov :r0 2)           ; XDP_PASS
+       (dsl/exit-insn)]
+
+      ;; Drop non-TCP
+      [[:label :drop]
+       (dsl/mov :r0 1)           ; XDP_DROP
+       (dsl/exit-insn)])))
+
+;; Load and attach
+(def prog-fd (bpf/load-program xdp-firewall
+                               :prog-type :xdp
+                               :license "GPL"))
+(xdp/attach-xdp "eth0" prog-fd [:skb-mode])
+```
+
+**Tutorial and Documentation:**
+- `examples/helpers_tutorial.clj` - Interactive tutorial with all helpers
+- `docs/guides/helpers-guide.md` - Comprehensive API documentation
 
 ### ELF Object File Parsing
 
