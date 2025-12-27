@@ -85,10 +85,11 @@
 
 (deftest test-link-create-attr-structure
   (testing "BPF_LINK_CREATE attribute structure"
-    (let [attr-seg (#'lsm/link-create-attr->segment 5 27 0)]
-      (is (some? attr-seg))
-      ;; Structure should be at least 20 bytes (5 u32 fields)
-      (is (>= (.byteSize attr-seg) 20)))))
+    (utils/with-bpf-arena
+      (let [attr-seg (#'lsm/link-create-attr->segment 5 27 0)]
+        (is (some? attr-seg))
+        ;; Structure should be at least 20 bytes (5 u32 fields)
+        (is (>= (.byteSize attr-seg) 20))))))
 
 ;; ============================================================================
 ;; Program Loading Tests

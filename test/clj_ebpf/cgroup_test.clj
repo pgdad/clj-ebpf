@@ -93,17 +93,19 @@
 
 (deftest test-prog-attach-attr-structure
   (testing "BPF_PROG_ATTACH attribute structure"
-    (let [attr-seg (#'cgroup/prog-attach-attr->segment 5 6 0 1 0)]
-      (is (some? attr-seg))
-      ;; Structure should be at least 20 bytes (5 u32 fields)
-      (is (>= (.byteSize attr-seg) 20)))))
+    (utils/with-bpf-arena
+      (let [attr-seg (#'cgroup/prog-attach-attr->segment 5 6 0 1 0)]
+        (is (some? attr-seg))
+        ;; Structure should be at least 20 bytes (5 u32 fields)
+        (is (>= (.byteSize attr-seg) 20))))))
 
 (deftest test-prog-detach-attr-structure
   (testing "BPF_PROG_DETACH attribute structure"
-    (let [attr-seg (#'cgroup/prog-detach-attr->segment 5 6 0)]
-      (is (some? attr-seg))
-      ;; Structure should be at least 12 bytes (3 u32 fields)
-      (is (>= (.byteSize attr-seg) 12)))))
+    (utils/with-bpf-arena
+      (let [attr-seg (#'cgroup/prog-detach-attr->segment 5 6 0)]
+        (is (some? attr-seg))
+        ;; Structure should be at least 12 bytes (3 u32 fields)
+        (is (>= (.byteSize attr-seg) 12))))))
 
 ;; ============================================================================
 ;; Program Loader Tests

@@ -111,15 +111,16 @@
 
 (deftest test-perf-event-header-parsing
   (testing "Perf event header structure"
-    ;; Event header is 8 bytes: u32 type, u16 misc, u16 size
-    (let [header-data (utils/pack-struct [[:u32 9]     ; type = SAMPLE
-                                          [:u16 0]     ; misc
-                                          [:u16 32]])  ; size
-          seg (utils/bytes->segment header-data)
-          header (#'perf/read-perf-event-header seg 0)]
-      (is (= 9 (:type header)))
-      (is (= 0 (:misc header)))
-      (is (= 32 (:size header))))))
+    (utils/with-bpf-arena
+      ;; Event header is 8 bytes: u32 type, u16 misc, u16 size
+      (let [header-data (utils/pack-struct [[:u32 9]     ; type = SAMPLE
+                                            [:u16 0]     ; misc
+                                            [:u16 32]])  ; size
+            seg (utils/bytes->segment header-data)
+            header (#'perf/read-perf-event-header seg 0)]
+        (is (= 9 (:type header)))
+        (is (= 0 (:misc header)))
+        (is (= 32 (:size header)))))))
 
 ;; ============================================================================
 ;; Perf Consumer Tests
@@ -152,23 +153,24 @@
 ;; ============================================================================
 
 (deftest test-memory-segment-reading
-  (testing "Read u64 from segment"
-    (let [data (utils/pack-struct [[:u64 0x1122334455667788]])
-          seg (utils/bytes->segment data)
-          val (#'perf/read-u64-from-segment seg 0)]
-      (is (= 0x1122334455667788 val))))
+  (utils/with-bpf-arena
+    (testing "Read u64 from segment"
+      (let [data (utils/pack-struct [[:u64 0x1122334455667788]])
+            seg (utils/bytes->segment data)
+            val (#'perf/read-u64-from-segment seg 0)]
+        (is (= 0x1122334455667788 val))))
 
-  (testing "Read u32 from segment"
-    (let [data (utils/pack-struct [[:u32 0x12345678]])
-          seg (utils/bytes->segment data)
-          val (#'perf/read-u32-from-segment seg 0)]
-      (is (= 0x12345678 val))))
+    (testing "Read u32 from segment"
+      (let [data (utils/pack-struct [[:u32 0x12345678]])
+            seg (utils/bytes->segment data)
+            val (#'perf/read-u32-from-segment seg 0)]
+        (is (= 0x12345678 val))))
 
-  (testing "Read u16 from segment"
-    (let [data (utils/pack-struct [[:u16 0x1234]])
-          seg (utils/bytes->segment data)
-          val (#'perf/read-u16-from-segment seg 0)]
-      (is (= 0x1234 val)))))
+    (testing "Read u16 from segment"
+      (let [data (utils/pack-struct [[:u16 0x1234]])
+            seg (utils/bytes->segment data)
+            val (#'perf/read-u16-from-segment seg 0)]
+        (is (= 0x1234 val))))))
 
 ;; ============================================================================
 ;; Integration Tests (require root/CAP_PERFMON and BPF)

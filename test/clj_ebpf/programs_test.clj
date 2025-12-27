@@ -102,7 +102,7 @@
         ;; But we mark it as :failing to document the issue
         (is (thrown-with-msg?
               clojure.lang.ExceptionInfo
-              #"BPF syscall failed.*:inval"
+              #"BPF syscall failed.*:einval"
               (syscall/bpf-link-create-kprobe (:fd prog) "schedule" false))
             "EXPECTED FAILURE: kprobe_multi attachment returns EINVAL")))))
 
