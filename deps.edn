@@ -54,7 +54,14 @@
                                clj-ebpf.elf-test
                                clj-ebpf.btf-test
                                clj-ebpf.refs-test
-                               clj-ebpf.tutorial-verification-test]}}
+                               clj-ebpf.tutorial-verification-test
+                               clj-ebpf.bounds-test
+                               clj-ebpf.checksum-test
+                               clj-ebpf.ringbuf-test
+                               clj-ebpf.ipv6-test
+                               clj-ebpf.time-test
+                               clj-ebpf.rate-limit-test
+                               clj-ebpf.memory-helpers-test]}}
 
   :examples {:extra-paths ["examples"]}
 
