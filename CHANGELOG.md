@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Fixed
+- Fixed Java 25 compatibility issue reading `/proc` filesystem files. The
+  `get-current-cgroup` function now uses `java.nio.file.Files/readString`
+  instead of `slurp`, which fails on `/proc` files in Java 25 due to
+  `FileInputStream.available()` returning EINVAL for special filesystem files.
+- Fixed batch operations fallback logic checking wrong errno keyword.
+  The code was checking for `:inval` but the syscall layer returns `:einval`.
+  Now `map-lookup-batch`, `map-update-batch`, `map-delete-batch`, and
+  `map-lookup-and-delete-batch` correctly fall back to individual operations
+  when the kernel doesn't support batch syscalls.
+
+### Added
+- Comprehensive BPF helper functions library documentation in README
+- Helper functions tutorial (`examples/helpers_tutorial.clj`)
+- Helper functions guide (`docs/guides/helpers-guide.md`)
 
 ## [0.1.1] - 2025-11-27
 
@@ -107,13 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BPF filesystem mounted
 - Tracefs mounted (for kprobes/tracepoints)
 
-### Known Limitations
+### Known Limitations (v0.1.0)
 - Ring buffer memory-mapping not yet implemented (basic polling only)
 - Perf event buffers not fully implemented
 - ELF object file parsing not implemented
 - BTF support not yet available
 - XDP, TC, cgroup, LSM attachments not yet implemented
-- Batch map operations not yet available
+
+Note: Many of these limitations have been addressed in later releases. See the
+full changelog for current capabilities.
 
 ### Future Plans
 See README.md for complete roadmap of planned features.
