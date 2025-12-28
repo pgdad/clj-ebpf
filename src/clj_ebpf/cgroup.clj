@@ -458,7 +458,10 @@
   Returns the cgroup path relative to /sys/fs/cgroup."
   []
   (try
-    (let [cgroup-content (slurp "/proc/self/cgroup")
+    ;; Use Files/readString instead of slurp for /proc files
+    ;; Java 25+ FileInputStream.available() fails on /proc with EINVAL
+    (let [cgroup-content (Files/readString (Paths/get "/proc/self/cgroup"
+                                                       (into-array String [])))
           ;; cgroup v2 format: 0::/path
           lines (clojure.string/split-lines cgroup-content)
           cgroup-v2-line (first (filter #(.startsWith % "0::") lines))]
