@@ -445,7 +445,7 @@
                 [key value]))))
         (catch Exception e
           ;; If batch operation not supported, fall back to individual lookups
-          (if (= :inval (:errno-keyword (ex-data e)))
+          (if (= :einval (:errno-keyword (ex-data e)))
             (do
               (log/warn "Batch lookup not supported, falling back to individual lookups")
               (doall
@@ -500,7 +500,7 @@
         (syscall/map-update-batch (:fd bpf-map) keys-array values-array count :elem-flags flag-bits)
         (catch Exception e
           ;; If batch operation not supported, fall back to individual updates
-          (if (= :inval (:errno-keyword (ex-data e)))
+          (if (= :einval (:errno-keyword (ex-data e)))
             (do
               (log/warn "Batch update not supported, falling back to individual updates")
               (doseq [[k v] entries]
@@ -540,7 +540,7 @@
         (syscall/map-delete-batch (:fd bpf-map) keys-array count)
         (catch Exception e
           ;; If batch operation not supported, fall back to individual deletes
-          (if (= :inval (:errno-keyword (ex-data e)))
+          (if (= :einval (:errno-keyword (ex-data e)))
             (do
               (log/warn "Batch delete not supported, falling back to individual deletes")
               (reduce (fn [cnt k]
@@ -596,7 +596,7 @@
                 [key value]))))
         (catch Exception e
           ;; If batch operation not supported, fall back to individual operations
-          (if (= :inval (:errno-keyword (ex-data e)))
+          (if (= :einval (:errno-keyword (ex-data e)))
             (do
               (log/warn "Batch lookup-and-delete not supported, falling back to individual operations")
               (doall
