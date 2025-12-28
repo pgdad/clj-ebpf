@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet
+
+## [0.6.8] - 2025-12-28
+
 ### Fixed
 - Fixed Java 25 compatibility issue reading `/proc` filesystem files. The
   `get-current-cgroup` function now uses `java.nio.file.Files/readString`
