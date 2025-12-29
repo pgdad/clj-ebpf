@@ -65,7 +65,8 @@
                                clj-ebpf.rate-limit-test
                                clj-ebpf.memory-helpers-test
                                clj-ebpf.sockmap-test
-                               clj-ebpf.xskmap-test]}}
+                               clj-ebpf.xskmap-test
+                               clj-ebpf.sk-lookup-test]}}
 
   :examples {:extra-paths ["examples"]}
 

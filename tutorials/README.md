@@ -331,6 +331,41 @@ XSKMAP enables high-performance packet processing by bypassing the kernel networ
 
 See the [XSKMAP Guide](../docs/guides/xskmap-guide.md) for comprehensive documentation.
 
+### Programmable Socket Lookup with SK_LOOKUP
+
+**[Quick Start: SK_LOOKUP](quick-start-sk-lookup.md)** - Implement custom socket dispatch and multi-tenant routing!
+
+SK_LOOKUP programs intercept socket lookups and can select which socket handles connections:
+
+```clojure
+(require '[clj-ebpf.dsl.sk-lookup :as sk-lookup])
+
+;; Build SK_LOOKUP program that filters by port
+(def bytecode
+  (dsl/assemble
+    (vec (concat
+          (sk-lookup/sk-lookup-prologue :r6)
+          [(sk-lookup/sk-lookup-get-local-port :r6 :r7)]
+          [(dsl/jmp-imm :jeq :r7 8080 2)]
+          (sk-lookup/sk-lookup-drop)
+          (sk-lookup/sk-lookup-pass)))))
+
+;; Load and attach to network namespace
+(def prog (progs/load-program
+            {:prog-type :sk-lookup
+             :insns bytecode
+             :license "GPL"}))
+(progs/attach-sk-lookup prog {})
+```
+
+**Key Components:**
+- `sk-lookup-prologue` - Save context pointer
+- `sk-lookup-get-local-port` - Load local port
+- `sk-lookup-check-port` - Check port and branch
+- `sk-assign` - Assign socket to handle connection
+
+See the [SK_LOOKUP Guide](../docs/guides/sk-lookup-guide.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:

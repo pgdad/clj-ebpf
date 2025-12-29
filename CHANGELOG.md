@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.5] - 2025-12-29
+
+### Added
+- **SK_LOOKUP Support** for programmable socket lookup:
+  - `attach-sk-lookup` - Attach SK_LOOKUP programs to network namespace
+  - `detach-sk-lookup` - Detach SK_LOOKUP programs
+  - Enables custom socket dispatch and multi-tenant routing
+- **SK_LOOKUP DSL Helpers** (`clj-ebpf.dsl.sk-lookup`):
+  - `sk-lookup-prologue` - Standard prologue for SK_LOOKUP programs
+  - `sk-lookup-get-local-port`, `sk-lookup-get-remote-port` - Load port fields
+  - `sk-lookup-get-protocol`, `sk-lookup-get-family` - Load connection info
+  - `sk-lookup-get-local-ip4`, `sk-lookup-get-remote-ip4` - Load IPv4 addresses
+  - `sk-lookup-check-port`, `sk-lookup-check-protocol` - Common check patterns
+  - `sk-assign` - Assign socket to handle connection (helper 124)
+  - `sk-lookup-tcp`, `sk-lookup-udp` - Lookup sockets (helpers 84, 85)
+  - `sk-release` - Release socket reference (helper 86)
+  - `sk-lookup-pass`, `sk-lookup-drop` - Return patterns
+  - `build-sk-lookup-program` - Program builder
+- **BPF Link for Network Namespace** (`syscall/bpf-link-create-netns`):
+  - Create BPF links to network namespaces
+  - Used for SK_LOOKUP program attachment
+- **SK_LOOKUP Tutorial** (`tutorials/quick-start-sk-lookup.md`):
+  - Comprehensive guide covering SK_LOOKUP architecture
+  - Context structure and field access
+  - Port and protocol filtering patterns
+  - Socket assignment with bpf_sk_assign
+- **SK_LOOKUP Guide** (`docs/guides/sk-lookup-guide.md`):
+  - Reference documentation for SK_LOOKUP operations
+  - DSL function reference tables
+  - Context field offsets and byte order notes
+  - Kernel version requirements (5.9+)
+- SK_LOOKUP example (`examples/sk_lookup_steering.clj`)
+- 42 new tests for SK_LOOKUP with 150 assertions (CI-safe)
+- Updated `tutorials/README.md` with SK_LOOKUP section
+- Updated `docs/README.md` with SK_LOOKUP guide entry
+
 ## [0.7.4] - 2025-12-29
 
 ### Added

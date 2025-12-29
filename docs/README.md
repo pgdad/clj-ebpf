@@ -70,6 +70,25 @@ Deliver packets directly to userspace with zero-copy using AF_XDP:
 
 See also: [XSKMAP Tutorial](../tutorials/quick-start-xskmap.md) for hands-on examples.
 
+#### [Programmable Socket Lookup (SK_LOOKUP)](guides/sk-lookup-guide.md)
+
+Implement custom socket dispatch and multi-tenant routing with SK_LOOKUP programs:
+
+**Topics Covered:**
+- SK_LOOKUP program structure and context
+- Custom socket selection with bpf_sk_assign
+- Port and protocol filtering
+- Network namespace attachment
+- DSL helpers for context access
+
+**Target Audience:**
+- Multi-tenant service platforms
+- Service mesh implementations
+- Custom load balancers
+- Applications needing flexible socket routing
+
+See also: [SK_LOOKUP Tutorial](../tutorials/quick-start-sk-lookup.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -105,6 +124,7 @@ See the [`examples/`](../examples/) directory for runnable code:
 - **[custom_helpers.clj](../examples/custom_helpers.clj)** - Complete example of defining and using custom helpers
 - **[sockmap_redirect.clj](../examples/sockmap_redirect.clj)** - Socket redirection with SOCKMAP and SOCKHASH
 - **[xdp_xsk_redirect.clj](../examples/xdp_xsk_redirect.clj)** - AF_XDP zero-copy packet processing with XSKMAP
+- **[sk_lookup_steering.clj](../examples/sk_lookup_steering.clj)** - Programmable socket lookup and dispatch
 
 Run examples:
 ```bash

@@ -1147,3 +1147,117 @@
                       :prog-fd prog-fd
                       :errno (- result)})))
     result))
+
+;; ============================================================================
+;; SK_LOOKUP Program Attachment
+;; ============================================================================
+;;
+;; SK_LOOKUP programs enable programmable socket lookup. They run before
+;; the kernel's normal socket lookup and can select a specific socket to
+;; receive an incoming connection, bypassing standard bind rules.
+;;
+;; Use cases:
+;; - Multi-tenant socket dispatch
+;; - Custom load balancing
+;; - Service mesh implementations
+;; - Bind multiple services to same IP:port
+
+(defn- open-netns-fd
+  "Open a file descriptor to a network namespace.
+
+   Parameters:
+   - netns-path: Path to network namespace (default: /proc/self/ns/net)
+
+   Returns file descriptor."
+  [netns-path]
+  (let [file (java.io.RandomAccessFile. netns-path "r")
+        fd (.getFD file)
+        ;; Get the actual FD number using reflection
+        fd-field (.getDeclaredField java.io.FileDescriptor "fd")]
+    (.setAccessible fd-field true)
+    (let [fd-num (.getInt fd-field fd)]
+      ;; Store the file to prevent garbage collection
+      {:fd fd-num :file file})))
+
+(defn attach-sk-lookup
+  "Attach SK_LOOKUP program to a network namespace.
+
+   SK_LOOKUP programs intercept socket lookups for incoming connections
+   and can select which socket handles the connection.
+
+   Parameters:
+   - prog: BpfProgram to attach (must be :sk-lookup type)
+   - opts: Map with:
+     - :netns-path - Path to network namespace (default: \"/proc/self/ns/net\")
+     - :netns-fd - Already-open network namespace FD (alternative to :netns-path)
+
+   Example:
+     ;; Attach to current network namespace
+     (attach-sk-lookup prog {})
+
+     ;; Attach to specific namespace
+     (attach-sk-lookup prog {:netns-path \"/proc/1234/ns/net\"})
+
+     ;; Attach with pre-opened FD
+     (attach-sk-lookup prog {:netns-fd netns-fd})
+
+   Returns updated program with attachment info.
+
+   Requirements:
+   - Kernel 5.9+ for SK_LOOKUP support
+   - CAP_NET_ADMIN capability"
+  [^BpfProgram prog {:keys [netns-path netns-fd]
+                     :or {netns-path "/proc/self/ns/net"}}]
+  (let [;; Get or open netns FD
+        netns-info (if netns-fd
+                    {:fd netns-fd :file nil :external true}
+                    (open-netns-fd netns-path))
+        netns-fd-num (:fd netns-info)
+
+        ;; Create the BPF link
+        link-fd (syscall/bpf-link-create-netns (:fd prog) netns-fd-num :sk-lookup)
+
+        ;; Create detach function
+        detach-fn (fn []
+                   (try
+                     (syscall/close-fd link-fd)
+                     (catch Exception e
+                       (log/warn "Failed to close BPF link:" e)))
+                   ;; Close netns FD if we opened it
+                   (when-let [file (:file netns-info)]
+                     (try
+                       (.close ^java.io.RandomAccessFile file)
+                       (catch Exception e
+                         (log/warn "Failed to close netns file:" e)))))
+
+        attachment (->ProgramAttachment
+                    :sk-lookup
+                    (or netns-path (str "netns-fd:" netns-fd))
+                    link-fd
+                    detach-fn)]
+
+    (log/info "Attached SK_LOOKUP program to" (or netns-path "netns")
+              "link-fd:" link-fd)
+
+    ;; Add attachment to program
+    (update prog :attachments conj attachment)))
+
+(defn detach-sk-lookup
+  "Detach SK_LOOKUP program from network namespace.
+
+   Parameters:
+   - prog: BpfProgram with SK_LOOKUP attachment
+
+   Returns updated program without the attachment."
+  [^BpfProgram prog]
+  (let [sk-lookup-attachments (filter #(= :sk-lookup (:type %)) (:attachments prog))
+        other-attachments (remove #(= :sk-lookup (:type %)) (:attachments prog))]
+    ;; Detach all SK_LOOKUP attachments
+    (doseq [attachment sk-lookup-attachments]
+      (when-let [detach-fn (:detach-fn attachment)]
+        (try
+          (detach-fn)
+          (catch Exception e
+            (log/warn "Failed to detach SK_LOOKUP:" e)))))
+    ;; Return program with remaining attachments
+    (assoc prog :attachments (vec other-attachments))))

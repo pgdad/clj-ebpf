@@ -865,6 +865,52 @@
                     type-id)
                   (recur next-pos (inc type-id)))))))))))
 
+(defn bpf-link-create-netns
+  "Create a BPF link for network namespace attachment using BPF_LINK_CREATE.
+
+   Used for SK_LOOKUP programs that need to attach to a network namespace.
+
+   Parameters:
+   - prog-fd: BPF program file descriptor
+   - netns-fd: Network namespace file descriptor (from /proc/self/ns/net or similar)
+   - attach-type: Attachment type keyword (e.g., :sk-lookup)
+
+   Returns link FD on success, throws on error."
+  [prog-fd netns-fd attach-type]
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 128)
+          attach-type-num (const/attach-type->num attach-type)]
+
+      ;; Build bpf_attr for BPF_LINK_CREATE with netns
+      ;; prog_fd (offset 0)
+      (.set attr-mem C_INT 0 (int prog-fd))
+      ;; target_fd (offset 4) - network namespace FD
+      (.set attr-mem C_INT 4 (int netns-fd))
+      ;; attach_type (offset 8)
+      (.set attr-mem C_INT 8 (int attach-type-num))
+      ;; flags (offset 12)
+      (.set attr-mem C_INT 12 (int 0))
+
+      (log/debug "BPF_LINK_CREATE netns:"
+                 "\n  prog_fd:" prog-fd
+                 "\n  netns_fd:" netns-fd
+                 "\n  attach_type:" attach-type attach-type-num)
+
+      (let [result (int (bpf-syscall :link-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_LINK_CREATE failed for netns, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :prog-fd prog-fd
+                             :netns-fd netns-fd
+                             :attach-type attach-type})))
+          (do
+            (log/info "Created BPF link for" attach-type "netns-fd:" netns-fd "link-fd:" result)
+            result))))))
+
 (defn bpf-link-create-fentry
   "Create a BPF link for fentry/fexit using BPF_LINK_CREATE
    attach-type should be :trace-fentry or :trace-fexit
