@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.3] - 2025-12-29
+
+### Added
+- **SOCKMAP/SOCKHASH Tutorial** (`tutorials/quick-start-sockmap.md`):
+  - Comprehensive guide covering SOCKMAP vs SOCKHASH map types
+  - SK_SKB programs (stream parser and verdict)
+  - SK_MSG programs for sendmsg redirection
+  - Redirect helpers DSL reference
+  - Complete echo server and TCP proxy examples
+  - Best practices and troubleshooting
+- **Socket Redirection Guide** (`docs/guides/sockmap-guide.md`):
+  - Reference documentation for socket redirect operations
+  - DSL function reference table
+  - BPF helper function ID table
+  - Kernel version requirements
+  - Complete code examples
+- Updated `tutorials/README.md` with SOCKMAP section
+- Updated `docs/README.md` with socket redirection guide entry
+
 ## [0.7.2] - 2025-12-29
 
 ### Added
