@@ -63,7 +63,8 @@
                                clj-ebpf.ipv6-test
                                clj-ebpf.time-test
                                clj-ebpf.rate-limit-test
-                               clj-ebpf.memory-helpers-test]}}
+                               clj-ebpf.memory-helpers-test
+                               clj-ebpf.sockmap-test]}}
 
   :examples {:extra-paths ["examples"]}
 

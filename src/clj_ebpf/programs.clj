@@ -958,3 +958,192 @@
       (System/arraycopy payload 0 packet (+ 34 (count l4-header)) payload-len))
 
     packet))
+
+;; ============================================================================
+;; SK_SKB and SK_MSG Program Attachment (for SOCKMAP/SOCKHASH)
+;; ============================================================================
+
+(defn- prog-attach-attr->segment
+  "Create memory segment for bpf_attr union for BPF_PROG_ATTACH.
+
+  Structure (from linux/bpf.h):
+  struct {
+    __u32 target_fd;      // map fd for SOCKMAP
+    __u32 attach_bpf_fd;  // program fd
+    __u32 attach_type;
+    __u32 attach_flags;
+    __u32 replace_bpf_fd; // for BPF_F_REPLACE
+  }"
+  [target-fd prog-fd attach-type-int attach-flags replace-fd]
+  (let [attr (utils/pack-struct [[:u32 target-fd]
+                                 [:u32 prog-fd]
+                                 [:u32 attach-type-int]
+                                 [:u32 attach-flags]
+                                 [:u32 (or replace-fd 0)]])]
+    (utils/bytes->segment attr)))
+
+(defn- prog-detach-attr->segment
+  "Create memory segment for bpf_attr union for BPF_PROG_DETACH.
+
+  Structure:
+  struct {
+    __u32 target_fd;      // map fd
+    __u32 attach_bpf_fd;  // program fd (0 to detach all)
+    __u32 attach_type;
+  }"
+  [target-fd prog-fd attach-type-int]
+  (let [attr (utils/pack-struct [[:u32 target-fd]
+                                 [:u32 (or prog-fd 0)]
+                                 [:u32 attach-type-int]])]
+    (utils/bytes->segment attr)))
+
+(defn attach-sk-skb
+  "Attach SK_SKB program to a SOCKMAP or SOCKHASH.
+
+   SK_SKB programs are used for socket stream redirection. Two types:
+   - :stream-parser - Parses message boundaries (returns message length)
+   - :stream-verdict - Decides what to do with the message (pass/drop/redirect)
+
+   Parameters:
+   - prog: BpfProgram to attach
+   - map-fd: SOCKMAP or SOCKHASH file descriptor (or map record with :fd)
+   - attach-type: :stream-parser or :stream-verdict
+
+   Optional:
+   - :flags - Attach flags (default 0)
+   - :replace-fd - Program FD to replace
+
+   Example:
+     ;; Attach a stream parser
+     (attach-sk-skb parser-prog (:fd sock-map) :stream-parser)
+
+     ;; Attach a stream verdict program
+     (attach-sk-skb verdict-prog (:fd sock-map) :stream-verdict)
+
+   Returns the program with attachment info added."
+  [prog map-fd attach-type & {:keys [flags replace-fd]
+                              :or {flags 0 replace-fd nil}}]
+  (let [prog-fd (:fd prog)
+        map-fd-int (if (map? map-fd) (:fd map-fd) map-fd)
+        attach-type-kw (case attach-type
+                         :stream-parser :sk-skb-stream-parser
+                         :stream-verdict :sk-skb-stream-verdict
+                         :parser :sk-skb-stream-parser
+                         :verdict :sk-skb-stream-verdict
+                         attach-type)
+        attach-type-int (const/attach-type->num attach-type-kw)
+        attr-seg (prog-attach-attr->segment map-fd-int prog-fd attach-type-int flags replace-fd)
+        result (syscall/bpf-syscall :prog-attach attr-seg)]
+    (when (neg? result)
+      (throw (ex-info "Failed to attach SK_SKB program to map"
+                     {:prog-fd prog-fd
+                      :map-fd map-fd-int
+                      :attach-type attach-type
+                      :errno (- result)
+                      :error (syscall/errno->keyword (- result))})))
+    ;; Add attachment to program
+    (update prog :attachments conj
+            (->ProgramAttachment
+             :sk-skb
+             {:map-fd map-fd-int :attach-type attach-type}
+             (fn []
+               (let [detach-attr (prog-detach-attr->segment map-fd-int prog-fd attach-type-int)
+                     detach-result (syscall/bpf-syscall :prog-detach detach-attr)]
+                 (when (neg? detach-result)
+                   (throw (ex-info "Failed to detach SK_SKB program"
+                                  {:prog-fd prog-fd
+                                   :map-fd map-fd-int
+                                   :errno (- detach-result)})))))))))
+
+(defn attach-sk-msg
+  "Attach SK_MSG program to a SOCKMAP or SOCKHASH.
+
+   SK_MSG programs run on sendmsg()/sendfile() operations and can
+   redirect messages between sockets.
+
+   Parameters:
+   - prog: BpfProgram to attach
+   - map-fd: SOCKMAP or SOCKHASH file descriptor (or map record with :fd)
+
+   Optional:
+   - :flags - Attach flags (default 0)
+   - :replace-fd - Program FD to replace
+
+   Example:
+     (attach-sk-msg msg-verdict-prog (:fd sock-map))
+
+   Returns the program with attachment info added."
+  [prog map-fd & {:keys [flags replace-fd]
+                  :or {flags 0 replace-fd nil}}]
+  (let [prog-fd (:fd prog)
+        map-fd-int (if (map? map-fd) (:fd map-fd) map-fd)
+        attach-type-int (const/attach-type->num :sk-msg-verdict)
+        attr-seg (prog-attach-attr->segment map-fd-int prog-fd attach-type-int flags replace-fd)
+        result (syscall/bpf-syscall :prog-attach attr-seg)]
+    (when (neg? result)
+      (throw (ex-info "Failed to attach SK_MSG program to map"
+                     {:prog-fd prog-fd
+                      :map-fd map-fd-int
+                      :errno (- result)
+                      :error (syscall/errno->keyword (- result))})))
+    ;; Add attachment to program
+    (update prog :attachments conj
+            (->ProgramAttachment
+             :sk-msg
+             {:map-fd map-fd-int}
+             (fn []
+               (let [detach-attr (prog-detach-attr->segment map-fd-int prog-fd attach-type-int)
+                     detach-result (syscall/bpf-syscall :prog-detach detach-attr)]
+                 (when (neg? detach-result)
+                   (throw (ex-info "Failed to detach SK_MSG program"
+                                  {:prog-fd prog-fd
+                                   :map-fd map-fd-int
+                                   :errno (- detach-result)})))))))))
+
+(defn detach-sk-skb
+  "Detach SK_SKB program from a SOCKMAP or SOCKHASH.
+
+   Parameters:
+   - map-fd: SOCKMAP or SOCKHASH file descriptor
+   - attach-type: :stream-parser or :stream-verdict
+   - prog-fd: Optional program FD (nil to detach all)
+
+   Returns 0 on success."
+  [map-fd attach-type & {:keys [prog-fd]}]
+  (let [map-fd-int (if (map? map-fd) (:fd map-fd) map-fd)
+        attach-type-kw (case attach-type
+                         :stream-parser :sk-skb-stream-parser
+                         :stream-verdict :sk-skb-stream-verdict
+                         :parser :sk-skb-stream-parser
+                         :verdict :sk-skb-stream-verdict
+                         attach-type)
+        attach-type-int (const/attach-type->num attach-type-kw)
+        attr-seg (prog-detach-attr->segment map-fd-int prog-fd attach-type-int)
+        result (syscall/bpf-syscall :prog-detach attr-seg)]
+    (when (neg? result)
+      (throw (ex-info "Failed to detach SK_SKB program"
+                     {:map-fd map-fd-int
+                      :attach-type attach-type
+                      :prog-fd prog-fd
+                      :errno (- result)})))
+    result))
+
+(defn detach-sk-msg
+  "Detach SK_MSG program from a SOCKMAP or SOCKHASH.
+
+   Parameters:
+   - map-fd: SOCKMAP or SOCKHASH file descriptor
+   - prog-fd: Optional program FD (nil to detach all)
+
+   Returns 0 on success."
+  [map-fd & {:keys [prog-fd]}]
+  (let [map-fd-int (if (map? map-fd) (:fd map-fd) map-fd)
+        attach-type-int (const/attach-type->num :sk-msg-verdict)
+        attr-seg (prog-detach-attr->segment map-fd-int prog-fd attach-type-int)
+        result (syscall/bpf-syscall :prog-detach attr-seg)]
+    (when (neg? result)
+      (throw (ex-info "Failed to detach SK_MSG program"
+                     {:map-fd map-fd-int
+                      :prog-fd prog-fd
+                      :errno (- result)})))
+    result))

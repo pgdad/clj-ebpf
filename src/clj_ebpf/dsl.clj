@@ -185,6 +185,11 @@
    :sk-redirect-map        52
    :sock-map-update        53
    :xdp-adjust-meta        54
+   ;; Socket redirect helpers
+   :msg-redirect-map       60
+   :sock-hash-update       70
+   :msg-redirect-hash      71
+   :sk-redirect-hash       72
    })
 
 ;; ============================================================================

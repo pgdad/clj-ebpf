@@ -1153,6 +1153,90 @@
                :value-serializer utils/long->bytes
                :value-deserializer utils/bytes->long}))
 
+;; ============================================================================
+;; SOCKMAP and SOCKHASH - Socket Redirect Maps
+;; ============================================================================
+
+(defn create-sock-map
+  "Create a SOCKMAP for socket redirection (SK_SKB and SK_MSG programs).
+
+   SOCKMAP is an array-based map that stores socket references. It's used
+   by SK_SKB programs (stream parser and verdict) and SK_MSG programs to
+   redirect data between sockets at the kernel level, bypassing the TCP/IP
+   stack for high-performance proxying.
+
+   Parameters:
+   - max-entries: Maximum number of sockets to store
+
+   Optional keyword arguments:
+   - :map-name - Name for the map
+   - :key-size - Size of key in bytes (default: 4)
+
+   Usage pattern:
+   1. Create SOCKMAP
+   2. Load SK_SKB parser and verdict programs
+   3. Attach programs to the map with bpf_prog_attach
+   4. Add socket FDs to the map from userspace
+   5. Programs redirect data between sockets in the map
+
+   Note: Values are socket file descriptors (u32) from userspace perspective,
+   but the kernel converts them to internal socket structures.
+
+   Example:
+     (def sock-map (create-sock-map 256 :map-name \"sock_redirect\"))
+     ;; After accepting connections:
+     (map-update sock-map key socket-fd)
+     ;; SK_SKB verdict can redirect to sockets in this map"
+  [max-entries & {:keys [map-name key-size]
+                  :or {key-size 4}}]
+  (create-map {:map-type :sockmap
+               :key-size key-size
+               :value-size 4       ; Socket FD (u32)
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-sock-hash
+  "Create a SOCKHASH for hash-based socket redirection.
+
+   SOCKHASH is similar to SOCKMAP but uses hash-based lookup instead of
+   array indices. This is useful when you need to map arbitrary keys
+   (like connection tuples) to sockets.
+
+   Parameters:
+   - max-entries: Maximum number of sockets to store
+
+   Optional keyword arguments:
+   - :key-size - Size of key in bytes (default: 4, but often larger for
+                 connection tuples)
+   - :map-name - Name for the map
+
+   Common key formats:
+   - 4 bytes: Simple index or single identifier
+   - 12 bytes: Source IP + dest IP + port (IPv4)
+   - 36 bytes: Full 5-tuple (src/dst IP + src/dst port + protocol)
+
+   Example:
+     (def sock-hash (create-sock-hash 1024
+                      :key-size 12
+                      :map-name \"conn_sock_hash\"))
+     ;; Key could be (pack src-ip dst-ip port)
+     (map-update sock-hash conn-key socket-fd)"
+  [max-entries & {:keys [key-size map-name]
+                  :or {key-size 4}}]
+  (create-map {:map-type :sockhash
+               :key-size key-size
+               :value-size 4       ; Socket FD (u32)
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
 ;; Macro for resource management
 
 (defmacro with-map
