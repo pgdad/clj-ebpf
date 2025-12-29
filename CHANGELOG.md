@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Added
+- **High-Level Declarative Macros** (`clj-ebpf.macros`) - New macro system that
+  reduces boilerplate by 60% and provides a more Clojure-idiomatic API:
+  - `defmap-spec` - Define reusable BPF map specifications with sensible defaults
+  - `defprogram` - Define BPF programs declaratively with DSL instructions
+  - `with-bpf-script` - Complete lifecycle management for maps, programs, and
+    attachments with automatic cleanup
+  - `load-defprogram` - Convenience function to load a defprogram spec
+  - `create-defmap` - Convenience function to create a map from defmap-spec
+- Macros re-exported from `clj-ebpf.core` for convenient access
+- Support for all attachment types in `with-bpf-script`:
+  - XDP (`:xdp`) with mode and flags options
+  - TC (`:tc`) with direction and priority
+  - Kprobe/Kretprobe (`:kprobe`, `:kretprobe`)
+  - Tracepoint (`:tracepoint`) with category and event
+  - Uprobe/Uretprobe (`:uprobe`, `:uretprobe`) with binary and symbol/offset
+  - Cgroup (`:cgroup-skb`, `:cgroup-sock`) with cgroup path and direction
+  - LSM (`:lsm`) with hook name
+- Comprehensive macro documentation (`docs/guides/macros.md`)
+- Macro tutorial (`tutorials/quick-start-macros.md`)
+- Macro examples (`examples/macro_dsl.clj`)
+- Updated `examples/simple_kprobe.clj` to demonstrate both traditional and
+  macro approaches
+- 30 new tests for macros with 81 assertions (CI-safe, no BPF privileges required)
 
 ## [0.6.8] - 2025-12-28
 
