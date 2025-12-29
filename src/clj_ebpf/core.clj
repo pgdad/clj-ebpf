@@ -16,7 +16,8 @@
             [clj-ebpf.relocate :as relocate]
             [clj-ebpf.elf :as elf]
             [clj-ebpf.helpers :as helpers]
-            [clj-ebpf.refs :as refs]))
+            [clj-ebpf.refs :as refs]
+            [clj-ebpf.macros :as macros]))
 
 ;; Re-export main APIs
 
@@ -449,6 +450,29 @@
   "Load and attach LSM hook, ensure cleanup"
   [& args]
   `(lsm/with-lsm-hook ~@args))
+
+;; High-level declarative macros
+(defmacro defprogram
+  "Define a named BPF program with assembled bytecode and metadata.
+   See clj-ebpf.macros/defprogram for full documentation."
+  [name & opts]
+  `(macros/defprogram ~name ~@opts))
+
+(defmacro defmap-spec
+  "Define a reusable BPF map specification.
+   See clj-ebpf.macros/defmap-spec for full documentation."
+  [name & opts]
+  `(macros/defmap-spec ~name ~@opts))
+
+(defmacro with-bpf-script
+  "Execute body with BPF maps, programs, and attachments, ensuring cleanup.
+   See clj-ebpf.macros/with-bpf-script for full documentation."
+  [config & body]
+  `(macros/with-bpf-script ~config ~@body))
+
+;; Convenience functions for declarative macros
+(def load-defprogram macros/load-defprogram)
+(def create-defmap macros/create-defmap)
 
 ;; Initialization and system check
 

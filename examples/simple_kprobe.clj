@@ -1,9 +1,33 @@
 (ns simple-kprobe
-  "Simple kprobe example - trace sys_clone system call"
+  "Simple kprobe example - trace schedule() kernel function
+
+   This example demonstrates two approaches:
+   1. Using the new declarative macros (defprogram, with-bpf-script)
+   2. Using the traditional explicit bytecode approach
+
+   The new macros reduce boilerplate and make the code more readable."
   (:require [clj-ebpf.core :as bpf]
+            [clj-ebpf.macros :refer [defprogram with-bpf-script]]
+            [clj-ebpf.dsl :as dsl]
             [clj-ebpf.utils :as utils]
             [clj-ebpf.programs :as programs]
             [clj-ebpf.maps :as maps]))
+
+;; ============================================================================
+;; NEW WAY: Using declarative macros
+;; ============================================================================
+
+;; Define the kprobe program declaratively
+(defprogram simple-kprobe-prog
+  :type :kprobe
+  :license "GPL"
+  :opts {:prog-name "simple_kprobe"}
+  :body [(dsl/mov :r0 0)      ; Return 0
+         (dsl/exit-insn)])
+
+;; ============================================================================
+;; OLD WAY: Manual bytecode (kept for reference)
+;; ============================================================================
 
 ;; Simple BPF program that just returns 0 (does nothing but is valid)
 ;; This is the bytecode for:
@@ -62,10 +86,56 @@
           (println "\nVerifier log:")
           (println log))))))
 
+;; ============================================================================
+;; NEW WAY: Using with-bpf-script macro
+;; ============================================================================
+
+(defn run-with-macros
+  "Run kprobe using the new declarative macro approach."
+  []
+  (println "\n=== Using Declarative Macros (New Way) ===\n")
+
+  (println "Program spec defined with defprogram:")
+  (println "  Type:" (:prog-type simple-kprobe-prog))
+  (println "  License:" (:license simple-kprobe-prog))
+  (println "  Name:" (:prog-name simple-kprobe-prog))
+  (println "  Bytecode size:" (count ((:body-fn simple-kprobe-prog))) "bytes")
+  (println)
+
+  (println "Loading with with-bpf-script...")
+  (try
+    (with-bpf-script
+      {:progs  [prog simple-kprobe-prog]
+       :attach [{:prog prog :type :kprobe :function "schedule"}]}
+
+      (println "Program loaded! FD:" (:fd prog))
+      (println "Attached to schedule()")
+      (println)
+      (println "Tracing for 5 seconds...")
+      (println "(The program just returns 0, but demonstrates the macro workflow)")
+      (Thread/sleep 5000)
+      (println "Done!"))
+
+    (println "\nResources automatically cleaned up.")
+
+    (catch Exception e
+      (println "Error (may need sudo):" (.getMessage e)))))
+
 (defn -main
   [& args]
-  (run-simple-kprobe))
+  (println "Simple Kprobe Example")
+  (println "=====================")
+
+  (if (some #{"--new" "-n"} args)
+    ;; Run with macros
+    (run-with-macros)
+    ;; Run traditional way
+    (run-simple-kprobe))
+
+  (println)
+  (println "Tip: Run with --new to see the declarative macro approach"))
 
 ;; Run from REPL:
 ;; (require '[examples.simple-kprobe :as ex])
 ;; (ex/run-simple-kprobe)
+;; (ex/run-with-macros)
