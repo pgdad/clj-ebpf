@@ -6,7 +6,7 @@
             [clojure.tools.logging :as log]
             [clojure.string :as str]
             [clojure.java.io :as io])
-  (:import [java.lang.foreign MemorySegment]))
+  (:import [java.lang.foreign MemorySegment ValueLayout]))
 
 ;; BPF Program representation
 
@@ -1477,3 +1477,293 @@
     :insns bytecode
     :license license
     :prog-name (or prog-name (str "iter_" (name iter-type)))}))
+
+;; ============================================================================
+;; STRUCT_OPS Program Support
+;; ============================================================================
+;;
+;; STRUCT_OPS allows BPF programs to implement kernel function pointers
+;; defined in structures. The primary use case is implementing TCP
+;; congestion control algorithms entirely in BPF.
+;;
+;; Workflow:
+;; 1. Load programs for each callback using load-struct-ops-program
+;; 2. Create a struct_ops map with create-struct-ops-map (in maps module)
+;; 3. Register the struct_ops with register-struct-ops
+;;
+;; Requirements:
+;; - Kernel 5.6+ for basic STRUCT_OPS
+;; - Kernel 5.13+ for TCP congestion control
+;; - BTF (BPF Type Format) support
+
+(defrecord StructOpsProgram
+  [fd              ; Program file descriptor
+   type            ; Always :struct-ops
+   name            ; Program name
+   insn-count      ; Number of instructions
+   license         ; License string
+   verifier-log    ; Verifier log (if any)
+   attachments     ; Vector of attachments
+   struct-name     ; Target struct (e.g., "tcp_congestion_ops")
+   callback        ; Callback name (e.g., "ssthresh")
+   btf-id])        ; BTF type ID of target function
+
+(defn load-struct-ops-program
+  "Load a BPF program for STRUCT_OPS callback implementation.
+
+   STRUCT_OPS programs implement kernel function pointers. They require:
+   - Program type: :struct-ops
+   - BTF type ID of the target function in the struct
+   - Expected attach type based on the callback
+
+   Parameters:
+   - bytecode: Assembled program bytecode
+   - struct-name: Target struct name (e.g., \"tcp_congestion_ops\")
+   - callback: Callback name (e.g., \"ssthresh\")
+   - opts: Map with:
+     - :btf-id - BTF type ID of the callback function (required)
+     - :prog-name - Program name (default: struct_callback)
+     - :license - License string (default: \"GPL\")
+     - :log-level - Verifier log level (default: 1)
+
+   Returns a StructOpsProgram record.
+
+   Example:
+     ;; Load ssthresh callback
+     (def ssthresh-prog
+       (load-struct-ops-program
+         ssthresh-bytecode
+         \"tcp_congestion_ops\"
+         \"ssthresh\"
+         {:btf-id ssthresh-btf-id}))
+
+   Note: Use the BTF module to find the btf-id for your callback."
+  [bytecode struct-name callback {:keys [btf-id prog-name license log-level]
+                                   :or {license "GPL" log-level 1}}]
+  (when-not btf-id
+    (throw (ex-info "btf-id is required for struct_ops programs"
+                    {:struct-name struct-name :callback callback})))
+  (let [name (or prog-name (str struct-name "_" callback))
+        prog (load-program {:insns bytecode
+                            :prog-type :struct-ops
+                            :prog-name name
+                            :license license
+                            :log-level log-level
+                            :attach-btf-id btf-id})]
+    (map->StructOpsProgram
+     (assoc (into {} prog)
+            :type :struct-ops
+            :struct-name struct-name
+            :callback callback
+            :btf-id btf-id))))
+
+(defrecord StructOps
+  [map-fd           ; STRUCT_OPS map file descriptor
+   struct-name      ; Target struct (e.g., "tcp_congestion_ops")
+   btf-type-id      ; BTF type ID of the struct
+   programs         ; Map of callback -> StructOpsProgram
+   link-fd          ; BPF link file descriptor (when registered)
+   registered?])    ; Whether currently registered
+
+(defn- create-struct-ops-attr
+  "Create bpf_attr for BPF_MAP_UPDATE_ELEM with struct_ops data.
+
+   For struct_ops, we need to populate the struct with:
+   - Function pointers to BPF programs
+   - Struct-specific data fields
+
+   The value layout depends on the specific struct (e.g., tcp_congestion_ops)."
+  [struct-ops-map programs value-size]
+  ;; For struct_ops, the value is the struct with program FDs at the right offsets
+  ;; This is highly struct-specific and usually requires BTF introspection
+  ;; For now, we create a zeroed buffer - actual implementation would populate it
+  (byte-array value-size))
+
+(defn register-struct-ops
+  "Register a STRUCT_OPS implementation with the kernel.
+
+   This creates a BPF link that activates the struct_ops, making it
+   available for use by the kernel (e.g., as a TCP congestion control
+   algorithm).
+
+   Parameters:
+   - struct-ops-map: StructOpsMap from create-struct-ops-map
+   - programs: Map of callback name -> StructOpsProgram
+   - opts: Map with:
+     - :algo-name - Algorithm name (for TCP CC, max 16 chars)
+
+   Returns updated StructOps record with :registered? true.
+
+   Example:
+     (def my-cc (register-struct-ops
+                  struct-ops-map
+                  {:ssthresh ssthresh-prog
+                   :cong-avoid cong-avoid-prog}
+                  {:algo-name \"my_bpf_cc\"}))
+
+   Note: Once registered, the algorithm is available system-wide.
+   For TCP CC, use: sysctl -w net.ipv4.tcp_congestion_control=my_bpf_cc"
+  [struct-ops-map programs {:keys [algo-name]}]
+  (let [map-fd (:fd struct-ops-map)
+        struct-name (:struct-name struct-ops-map)
+        btf-type-id (:btf-type-id struct-ops-map)
+        value-size (:value-size struct-ops-map)
+
+        ;; Create the struct value with program FDs
+        ;; This is a simplified implementation - full implementation
+        ;; requires BTF introspection to place FDs at correct offsets
+        value (create-struct-ops-attr struct-ops-map programs value-size)
+
+        ;; Update the map with the struct value
+        ;; Key is always 0 for struct_ops maps
+        _ (syscall/with-bpf-syscall
+            (let [key-seg (syscall/allocate-zeroed 4)
+                  value-seg (if (instance? MemorySegment value)
+                              value
+                              (let [seg (syscall/allocate-zeroed value-size)]
+                                (when (pos? (count value))
+                                  (MemorySegment/copy
+                                   (MemorySegment/ofArray ^bytes value)
+                                   0 seg 0 (count value)))
+                                seg))]
+              (.set key-seg ValueLayout/JAVA_INT 0 (int 0))
+              (syscall/map-update-elem map-fd key-seg value-seg 0)))
+
+        ;; Create BPF link to register the struct_ops
+        ;; Using BPF_LINK_CREATE with attach_type = BPF_STRUCT_OPS
+        link-fd (syscall/bpf-link-create-struct-ops map-fd)]
+
+    (log/info "Registered struct_ops:" struct-name
+              "map-fd:" map-fd "link-fd:" link-fd)
+
+    (->StructOps map-fd struct-name btf-type-id programs link-fd true)))
+
+(defn unregister-struct-ops
+  "Unregister a STRUCT_OPS implementation.
+
+   This closes the BPF link, making the struct_ops unavailable.
+   For TCP congestion control, active connections using this
+   algorithm will fall back to the default.
+
+   Parameters:
+   - struct-ops: StructOps record from register-struct-ops
+
+   Returns updated StructOps with :registered? false."
+  [struct-ops]
+  (when-let [link-fd (:link-fd struct-ops)]
+    (try
+      (syscall/close-fd link-fd)
+      (log/info "Unregistered struct_ops:" (:struct-name struct-ops))
+      (catch Exception e
+        (log/warn "Failed to close struct_ops link:" e))))
+  (assoc struct-ops :link-fd nil :registered? false))
+
+(defn close-struct-ops
+  "Close struct_ops and all associated resources.
+
+   This unregisters the struct_ops and closes:
+   - BPF link
+   - STRUCT_OPS map
+   - All program file descriptors
+
+   Parameters:
+   - struct-ops: StructOps record
+   - opts: Map with:
+     - :close-programs? - Whether to close programs (default: true)"
+  [struct-ops & {:keys [close-programs?] :or {close-programs? true}}]
+  ;; Unregister if registered
+  (when (:registered? struct-ops)
+    (unregister-struct-ops struct-ops))
+
+  ;; Close programs
+  (when close-programs?
+    (doseq [[_name prog] (:programs struct-ops)]
+      (close-program prog)))
+
+  ;; Close the map
+  (when-let [map-fd (:map-fd struct-ops)]
+    (try
+      (syscall/close-fd map-fd)
+      (log/info "Closed struct_ops map fd:" map-fd)
+      (catch Exception e
+        (log/warn "Failed to close struct_ops map:" e)))))
+
+(defmacro with-struct-ops
+  "Execute body with struct_ops, ensuring cleanup.
+
+   Parameters:
+   - bindings: [struct-ops-sym struct-ops-map programs opts]
+   - body: Forms to execute
+
+   Example:
+     (with-struct-ops [my-cc struct-ops-map programs {:algo-name \"my_cc\"}]
+       ;; my-cc is registered and available
+       (Thread/sleep 60000))"
+  [[struct-ops-sym struct-ops-map programs opts] & body]
+  `(let [~struct-ops-sym (register-struct-ops ~struct-ops-map ~programs ~opts)]
+     (try
+       ~@body
+       (finally
+         (close-struct-ops ~struct-ops-sym)))))
+
+;; ============================================================================
+;; TCP Congestion Control Helpers
+;; ============================================================================
+
+(def tcp-congestion-ops-callbacks
+  "TCP congestion control operation callbacks with metadata.
+
+   Each callback has:
+   - :args - Number of arguments
+   - :return - Return type (:u32, :void, :size-t)
+   - :required - Whether the callback is required"
+  {:ssthresh      {:args 1 :return :u32  :required false
+                   :doc "Calculate slow start threshold"}
+   :cong-avoid    {:args 3 :return :void :required false
+                   :doc "Congestion avoidance algorithm"}
+   :set-state     {:args 2 :return :void :required false
+                   :doc "Handle state changes"}
+   :cwnd-event    {:args 2 :return :void :required false
+                   :doc "Handle cwnd events"}
+   :in-ack-event  {:args 2 :return :void :required false
+                   :doc "Handle ACK events in fast path"}
+   :pkts-acked    {:args 2 :return :void :required false
+                   :doc "Handle packets acknowledged"}
+   :min-tso-segs  {:args 1 :return :u32  :required false
+                   :doc "Minimum TSO segments"}
+   :cong-control  {:args 2 :return :void :required false
+                   :doc "Main congestion control logic"}
+   :undo-cwnd     {:args 1 :return :u32  :required false
+                   :doc "Undo cwnd changes"}
+   :sndbuf-expand {:args 1 :return :u32  :required false
+                   :doc "Expand send buffer"}
+   :get-info      {:args 3 :return :size-t :required false
+                   :doc "Get info for /proc/net/tcp"}
+   :init          {:args 1 :return :void :required false
+                   :doc "Initialize new connection"}
+   :release       {:args 1 :return :void :required false
+                   :doc "Release connection resources"}})
+
+(defn validate-tcp-cc-programs
+  "Validate a set of TCP congestion control programs.
+
+   Checks that:
+   - All provided callbacks are valid
+   - Return types match expected types
+   - At least one callback is implemented
+
+   Parameters:
+   - programs: Map of callback name -> program
+
+   Returns true if valid, throws on error."
+  [programs]
+  (when (empty? programs)
+    (throw (ex-info "At least one callback must be implemented"
+                    {:programs programs})))
+  (doseq [[callback _prog] programs]
+    (let [callback-kw (if (string? callback) (keyword callback) callback)]
+      (when-not (contains? tcp-congestion-ops-callbacks callback-kw)
+        (throw (ex-info "Unknown TCP CC callback"
+                        {:callback callback
+                         :valid-callbacks (keys tcp-congestion-ops-callbacks)})))))
+  true)

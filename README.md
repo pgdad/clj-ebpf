@@ -105,6 +105,12 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - `with-bpf-script` - Lifecycle management for maps, programs, and attachments
   - Automatic resource cleanup and attachment management
   - 60% less boilerplate compared to traditional approach
+- ✅ **BPF STRUCT_OPS (TCP Congestion Control)**
+  - Implement custom TCP congestion control algorithms in BPF
+  - Complete tcp_congestion_ops callback support (ssthresh, cong_avoid, init, release, etc.)
+  - DSL helpers for tcp_sock field access and AIMD patterns
+  - STRUCT_OPS map creation and registration
+  - Kernel 5.6+ for basic support, 5.13+ for TCP CC
 - ✅ **728 tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)

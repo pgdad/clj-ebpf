@@ -456,6 +456,49 @@ BPF Iterators (bpf_iter) iterate over kernel data and output results:
 
 See the [BPF Iterators Guide](../docs/guides/iterators-guide.md) for comprehensive documentation.
 
+### Custom TCP Congestion Control with STRUCT_OPS
+
+**[Quick Start: STRUCT_OPS TCP CC](quick-start-struct-ops.md)** - Implement custom TCP congestion control algorithms entirely in BPF!
+
+BPF STRUCT_OPS allows BPF programs to replace kernel function pointers:
+
+```clojure
+(require '[clj-ebpf.dsl.struct-ops :as struct-ops])
+
+;; Build ssthresh callback (AIMD: ssthresh = cwnd/2, min 2)
+(def ssthresh-bytecode
+  (dsl/assemble
+    (vec (concat
+          (struct-ops/ssthresh-prologue :r6)
+          (struct-ops/aimd-ssthresh :r6 :r7)
+          (struct-ops/struct-ops-return)))))
+
+;; Complete algorithm set
+(def my-cc-programs
+  {:ssthresh   (dsl/assemble (struct-ops/minimal-ssthresh-program))
+   :cong-avoid (dsl/assemble (struct-ops/minimal-cong-avoid-program))
+   :init       (dsl/assemble (struct-ops/minimal-init-program))
+   :release    (dsl/assemble (struct-ops/minimal-release-program))})
+```
+
+**TCP Socket Fields:**
+- `snd-cwnd` - Congestion window (packets)
+- `snd-ssthresh` - Slow start threshold
+- `srtt-us` - Smoothed RTT in microseconds
+- `ca-state` - Congestion avoidance state
+
+**Key Callbacks:**
+- `ssthresh` - Calculate slow start threshold after loss
+- `cong_avoid` - Congestion avoidance algorithm
+- `set_state` / `cwnd_event` - Handle state transitions
+- `init` / `release` - Connection lifecycle
+
+**Key Components:**
+- `struct-ops-prologue` / `*-2arg` / `*-3arg` - Callback prologues
+- `tcp-sock-load-*` - Read TCP socket fields
+- `aimd-ssthresh` - Classic AIMD ssthresh calculation
+- `struct-ops-return-*` - Return patterns
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:

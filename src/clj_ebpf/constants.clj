@@ -178,7 +178,8 @@
    :sk-reuseport-select-or-migrate 40
    :perf-event 41
    :trace-kprobe-multi 42
-   :trace-kprobe-session 43})
+   :trace-kprobe-session 43
+   :struct-ops 44})
 
 (def attach-type->int
   (into {} (map (fn [[k v]] [k v]) attach-type)))

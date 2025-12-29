@@ -1604,3 +1604,72 @@
           (if (= :enoent (:errno-keyword (ex-data e)))
             false  ; Definitely not in set
             (throw e)))))))
+
+;; ============================================================================
+;; STRUCT_OPS Map Support
+;; ============================================================================
+;;
+;; STRUCT_OPS maps are special BPF maps that hold programs implementing
+;; kernel function pointers. The primary use case is TCP congestion control.
+;;
+;; Key features:
+;; - Map type is BPF_MAP_TYPE_STRUCT_OPS (27)
+;; - Requires BTF (BPF Type Format) information
+;; - key_size = 4 (unused but required)
+;; - value_size = size of the struct (from BTF)
+;; - max_entries = 1 (single struct instance)
+;; - btf_vmlinux_value_type_id points to the kernel struct type
+
+(defrecord StructOpsMap
+  [fd                        ; Map file descriptor
+   struct-name               ; Name of the kernel struct (e.g., "tcp_congestion_ops")
+   btf-type-id               ; BTF type ID for the struct
+   value-size                ; Size of the struct
+   programs                  ; Map of callback-name -> program-fd
+   registered?])             ; Whether the struct_ops is registered
+
+(defn create-struct-ops-map
+  "Create a STRUCT_OPS map for implementing kernel function pointers.
+
+  STRUCT_OPS maps are used to implement kernel structures with function
+  pointers in BPF. The most common use case is implementing TCP congestion
+  control algorithms.
+
+  Parameters:
+  - struct-name: Name of the kernel struct to implement (e.g., \"tcp_congestion_ops\")
+  - opts: Map with:
+    - :btf-vmlinux-value-type-id - BTF type ID of the struct in vmlinux (required)
+    - :value-size - Size of the struct in bytes (required)
+    - :map-name - Name for the map (default: struct-name)
+    - :btf-fd - BTF file descriptor (optional, for custom BTF)
+
+  Returns a StructOpsMap record.
+
+  Example:
+    ;; Get BTF type ID for tcp_congestion_ops from vmlinux BTF
+    (def tcp-ops-btf-id (btf/find-struct-type-id \"tcp_congestion_ops\"))
+    (def tcp-ops-size (btf/get-struct-size tcp-ops-btf-id))
+
+    (def struct-ops-map
+      (create-struct-ops-map \"tcp_congestion_ops\"
+        {:btf-vmlinux-value-type-id tcp-ops-btf-id
+         :value-size tcp-ops-size}))
+
+  Note: STRUCT_OPS requires kernel 5.6+ and BTF support."
+  [struct-name {:keys [btf-vmlinux-value-type-id value-size map-name btf-fd]
+                :or {map-name nil}}]
+  (when-not btf-vmlinux-value-type-id
+    (throw (ex-info "btf-vmlinux-value-type-id is required for struct_ops maps"
+                    {:struct-name struct-name})))
+  (when-not value-size
+    (throw (ex-info "value-size is required for struct_ops maps"
+                    {:struct-name struct-name})))
+  (let [fd (syscall/map-create
+             {:map-type :struct-ops
+              :key-size 4        ; Required but unused
+              :value-size value-size
+              :max-entries 1     ; Single struct instance
+              :map-name (or map-name struct-name)
+              :btf-vmlinux-value-type-id btf-vmlinux-value-type-id
+              :btf-fd btf-fd})]
+    (->StructOpsMap fd struct-name btf-vmlinux-value-type-id value-size {} false)))

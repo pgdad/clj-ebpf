@@ -1096,6 +1096,63 @@
             (log/info "Created BPF iterator fd:" result "from link-fd:" link-fd)
             result))))))
 
+(defn bpf-link-create-struct-ops
+  "Create a BPF link for a STRUCT_OPS map.
+
+   STRUCT_OPS links register the struct_ops implementation with the kernel,
+   making it available for use (e.g., as a TCP congestion control algorithm).
+
+   Parameters:
+   - map-fd: STRUCT_OPS map file descriptor
+
+   Returns link FD on success, throws on error.
+
+   Note: For struct_ops, the link is created from the map, not from a program.
+   The programs are referenced via the map's value structure."
+  [map-fd]
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 128)
+          ;; For struct_ops, we use a special attach type
+          ;; The kernel checks for BPF_LINK_TYPE_STRUCT_OPS
+          attach-type-num (const/attach-type->num :struct-ops)]
+
+      ;; Build bpf_attr for BPF_LINK_CREATE with struct_ops
+      ;; struct { /* BPF_LINK_CREATE */
+      ;;   __u32 prog_fd;         /* offset 0 - 0 for struct_ops */
+      ;;   union {
+      ;;     __u32 target_fd;     /* offset 4 - map_fd for struct_ops */
+      ;;     __u32 target_ifindex; /* for XDP */
+      ;;   };
+      ;;   __u32 attach_type;     /* offset 8 */
+      ;;   __u32 flags;           /* offset 12 */
+      ;; }
+
+      ;; prog_fd (offset 0) - 0 for struct_ops (referenced via map)
+      (.set attr-mem C_INT 0 (int 0))
+      ;; target_fd (offset 4) - the struct_ops map FD
+      (.set attr-mem C_INT 4 (int map-fd))
+      ;; attach_type (offset 8)
+      (.set attr-mem C_INT 8 (int attach-type-num))
+      ;; flags (offset 12)
+      (.set attr-mem C_INT 12 (int 0))
+
+      (log/debug "BPF_LINK_CREATE struct_ops:"
+                 "\n  map_fd:" map-fd
+                 "\n  attach_type:" attach-type-num)
+
+      (let [result (int (bpf-syscall :link-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_LINK_CREATE failed for struct_ops, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_LINK_CREATE struct_ops failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :map-fd map-fd})))
+          (do
+            (log/info "Created BPF link for struct_ops map-fd:" map-fd "link-fd:" result)
+            result))))))
+
 ;; Close file descriptor
 (def ^:private close-fn
   (let [sym (.find libc-lookup "close")]

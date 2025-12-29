@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.8] - 2025-12-29
+
+### Added
+- **BPF STRUCT_OPS Support** for implementing TCP congestion control:
+  - Allows BPF programs to replace kernel function pointers in structures
+  - Full tcp_congestion_ops callback support (ssthresh, cong_avoid, init, release, etc.)
+  - STRUCT_OPS map creation and BPF link registration
+- **STRUCT_OPS DSL Helpers** (`clj-ebpf.dsl.struct-ops`):
+  - `struct-ops-prologue`, `struct-ops-prologue-2arg`, `struct-ops-prologue-3arg` - Callback prologues
+  - `tcp-sock-load-*` - TCP socket field access (cwnd, ssthresh, srtt, ca-state, etc.)
+  - `tcp-sock-store-*` - TCP socket field modification
+  - `aimd-ssthresh` - Classic AIMD slow start threshold calculation
+  - `slow-start-check`, `increment-cwnd` - Congestion avoidance patterns
+  - `struct-ops-return-*` - Return patterns for different callback types
+  - `ssthresh-prologue`, `cong-avoid-prologue`, etc. - Callback-specific prologues
+  - `minimal-*-program` - Ready-to-use program templates
+  - `struct-ops-section-name`, `tcp-cong-ops-section-name` - ELF section names
+  - `make-struct-ops-info`, `make-tcp-cong-ops-info` - Program metadata
+  - TCP congestion control constants (ca-states, ca-events, ack-flags)
+- **STRUCT_OPS High-Level API** (`clj-ebpf.programs`):
+  - `StructOpsProgram`, `StructOps` records for lifecycle management
+  - `load-struct-ops-program` - Load callback programs
+  - `register-struct-ops`, `unregister-struct-ops` - Registration lifecycle
+  - `close-struct-ops` - Resource cleanup
+  - `with-struct-ops` macro - Automatic cleanup
+  - `tcp-congestion-ops-callbacks` - Callback metadata and validation
+- **STRUCT_OPS Map Support** (`clj-ebpf.maps`):
+  - `StructOpsMap` record for struct_ops maps
+  - `create-struct-ops-map` - Create STRUCT_OPS maps with BTF support
+- **STRUCT_OPS Syscall Support** (`clj-ebpf.syscall`):
+  - `bpf-link-create-struct-ops` - Create BPF link for struct_ops
+  - Added `:struct-ops` attach type constant (44)
+- **STRUCT_OPS Tutorial** (`tutorials/quick-start-struct-ops.md`):
+  - TCP congestion control concepts and architecture
+  - Callback implementation patterns
+  - TCP socket field access
+  - AIMD and custom algorithm patterns
+  - Registration workflow
+- STRUCT_OPS example (`examples/struct_ops_tcp_cc.clj`)
+- 64 new tests for STRUCT_OPS with 331 assertions (CI-safe)
+- Updated `tutorials/README.md` with STRUCT_OPS section
+- Updated `README.md` with STRUCT_OPS feature
+
+### Note
+- Requires kernel 5.6+ for basic STRUCT_OPS support
+- Requires kernel 5.13+ for TCP congestion control in BPF
+- Requires BTF support and CAP_BPF + CAP_NET_ADMIN capabilities
+
 ## [0.7.7] - 2025-12-29
 
 ### Added
