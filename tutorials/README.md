@@ -204,6 +204,48 @@ Deploy and operate eBPF applications in production environments.
 
 The clj-ebpf library includes several powerful features for development and testing:
 
+### High-Level Declarative Macros (`clj-ebpf.macros`)
+
+**[Quick Start: Declarative Macros](quick-start-macros.md)** - Learn to write BPF applications with 60% less code!
+
+Three powerful macros reduce boilerplate and make BPF programming more Clojure-like:
+
+```clojure
+(require '[clj-ebpf.macros :refer [defmap-spec defprogram with-bpf-script]]
+         '[clj-ebpf.dsl :as dsl])
+
+;; Define a reusable map specification
+(defmap-spec packet-counter
+  :type :array
+  :key-size 4
+  :value-size 8
+  :max-entries 256)
+
+;; Define a BPF program declaratively
+(defprogram xdp-pass
+  "Pass all packets through"
+  :type :xdp
+  :body [(dsl/mov :r0 2)      ; XDP_PASS
+         (dsl/exit-insn)])
+
+;; Automatic lifecycle management
+(with-bpf-script
+  {:maps   [counter packet-counter]
+   :progs  [prog xdp-pass]
+   :attach [{:prog prog :type :xdp :target "lo"}]}
+
+  (println "XDP attached! FD:" (:fd prog))
+  (Thread/sleep 5000))
+;; Automatic cleanup: detach, unload, close
+```
+
+**Key Benefits:**
+- `defmap-spec` - Define reusable map specifications with sensible defaults
+- `defprogram` - Define programs with DSL body, automatic bytecode assembly
+- `with-bpf-script` - Complete lifecycle management with automatic cleanup
+
+See the [Macros Guide](../docs/guides/macros.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:

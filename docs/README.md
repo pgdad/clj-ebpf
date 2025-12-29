@@ -12,6 +12,26 @@ Start with the main [README](../README.md) in the project root for:
 
 ## Guides
 
+### Quick Start
+
+#### [High-Level Declarative Macros](guides/macros.md)
+
+Learn to write BPF applications with 60% less code using the declarative macros:
+
+**Topics Covered:**
+- `defmap-spec` - Define reusable BPF map specifications
+- `defprogram` - Define BPF programs declaratively with DSL
+- `with-bpf-script` - Automatic lifecycle management
+- Attachment types (XDP, TC, kprobe, tracepoint, uprobe, cgroup, LSM)
+- Best practices and when to use macros vs lower-level API
+
+**Target Audience:**
+- New clj-ebpf users wanting a quick start
+- Developers preferring declarative, Clojure-idiomatic APIs
+- REPL-driven development workflows
+
+See also: [Macros Tutorial](../tutorials/quick-start-macros.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -41,7 +61,8 @@ Learn how to extend clj-ebpf with new BPF helper functions as they're added to t
 
 See the [`examples/`](../examples/) directory for runnable code:
 
-- **[simple_kprobe.clj](../examples/simple_kprobe.clj)** - Basic kprobe attachment and tracing
+- **[macro_dsl.clj](../examples/macro_dsl.clj)** - Comprehensive examples of high-level declarative macros
+- **[simple_kprobe.clj](../examples/simple_kprobe.clj)** - Basic kprobe attachment and tracing (shows both traditional and macro approaches)
 - **[execve_tracer.clj](../examples/execve_tracer.clj)** - System call tracing with BPF maps
 - **[custom_helpers.clj](../examples/custom_helpers.clj)** - Complete example of defining and using custom helpers
 
@@ -63,6 +84,13 @@ sudo clj -M -m examples.execve-tracer trace
   - Program loading and attachment
   - Event processing
   - Resource management macros
+  - Re-exports from `clj-ebpf.macros`
+
+- **`clj-ebpf.macros`** - High-level declarative macros
+  - `defmap-spec` - Define reusable map specifications
+  - `defprogram` - Define programs with DSL body
+  - `with-bpf-script` - Lifecycle management
+  - `load-defprogram`, `create-defmap` - Convenience functions
 
 - **`clj-ebpf.helpers`** - BPF helper function registry
   - 200+ helper definitions with metadata
