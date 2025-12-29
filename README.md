@@ -99,6 +99,12 @@ clj-ebpf provides idiomatic Clojure APIs for loading, managing, and interacting 
   - Token bucket rate limiting for DDoS protection
   - Memory operations (zero, copy, struct initialization)
   - BPF map helpers for in-program map operations
+- ✅ **High-Level Declarative Macros**
+  - `defmap-spec` - Define reusable BPF map specifications
+  - `defprogram` - Define BPF programs declaratively with DSL instructions
+  - `with-bpf-script` - Lifecycle management for maps, programs, and attachments
+  - Automatic resource cleanup and attachment management
+  - 60% less boilerplate compared to traditional approach
 - ✅ **728 tests with comprehensive assertions - all passing**
 
 ### Planned (Future Phases)
@@ -1624,6 +1630,141 @@ The `clj-ebpf.examples` namespace provides 25+ ready-to-use example programs dem
 ```
 
 **Note:** The DSL generates raw BPF bytecode that must pass kernel verifier checks. Complex programs may need careful register management and bounds checking.
+
+### High-Level Declarative Macros
+
+For rapid prototyping and reduced boilerplate, clj-ebpf provides high-level declarative macros:
+
+```clojure
+(require '[clj-ebpf.core :as bpf]
+         '[clj-ebpf.macros :refer [defprogram defmap-spec with-bpf-script]]
+         '[clj-ebpf.dsl :as dsl])
+
+;; Define a reusable map specification
+(defmap-spec packet-counter
+  :type :array
+  :key-size 4
+  :value-size 8
+  :max-entries 256)
+
+;; Define a BPF program declaratively
+(defprogram xdp-counter
+  "XDP program that counts and passes all packets"
+  :type :xdp
+  :license "GPL"
+  :body [(dsl/mov :r0 2)      ; XDP_PASS
+         (dsl/exit-insn)])
+
+;; Use with-bpf-script for automatic lifecycle management
+(with-bpf-script
+  {:maps   [counter packet-counter]
+   :progs  [prog xdp-counter]
+   :attach [{:prog prog :type :xdp :target "lo"}]}
+
+  (println "XDP attached to loopback!")
+  (println "Program FD:" (:fd prog))
+  (println "Map FD:" (:fd counter))
+
+  ;; Use the map and program
+  (bpf/map-update counter 0 0)
+  (Thread/sleep 5000)
+  (println "Counter:" (bpf/map-lookup counter 0)))
+;; All resources automatically cleaned up
+```
+
+**Comparison - Traditional vs Declarative:**
+
+```clojure
+;; BEFORE: Traditional approach (verbose)
+(bpf/with-map [m {:map-type :hash
+                  :key-size 4
+                  :value-size 4
+                  :max-entries 1000
+                  :map-name "my_map"
+                  :key-serializer utils/int->bytes
+                  :key-deserializer utils/bytes->int
+                  :value-serializer utils/int->bytes
+                  :value-deserializer utils/bytes->int}]
+  (bpf/with-program [prog {:prog-type :xdp
+                           :insns (dsl/assemble [(dsl/mov :r0 2)
+                                                 (dsl/exit-insn)])
+                           :license "GPL"
+                           :prog-name "my_prog"}]
+    (let [attached (bpf/attach-xdp prog "lo" 0 :skb)]
+      (try
+        ;; Your code here
+        (finally
+          (bpf/detach-xdp "lo"))))))
+
+;; AFTER: Declarative approach (60% less code)
+(defmap-spec my-map :type :hash :key-size 4 :value-size 4 :max-entries 1000)
+(defprogram my-prog :type :xdp :body [(dsl/mov :r0 2) (dsl/exit-insn)])
+
+(with-bpf-script
+  {:maps [m my-map] :progs [p my-prog] :attach [{:prog p :type :xdp :target "lo"}]}
+  ;; Your code here - cleanup is automatic
+  )
+```
+
+**Available Macros:**
+
+**`defmap-spec`** - Define reusable BPF map specifications:
+```clojure
+(defmap-spec name
+  :type :hash             ; :hash, :array, :lru-hash, :percpu-hash, :ringbuf, etc.
+  :key-size 4             ; Size of key in bytes
+  :value-size 8           ; Size of value in bytes
+  :max-entries 1024       ; Maximum entries
+  :flags 0                ; Optional flags (default: 0)
+  :map-name "custom"      ; Optional custom name (default: var name)
+  :key-serializer fn      ; Optional serializer (default: int->bytes)
+  :value-serializer fn)   ; Optional serializer (default: int->bytes)
+```
+
+**`defprogram`** - Define BPF programs declaratively:
+```clojure
+(defprogram name
+  "Optional docstring"
+  :type :xdp              ; :xdp, :kprobe, :tracepoint, :tc, :cgroup-skb, etc.
+  :license "GPL"          ; License string (default: "GPL")
+  :body [...]             ; Vector of DSL instructions
+  :opts {:log-level 2     ; Verifier log level (0-2)
+         :prog-name "x"}) ; Optional custom name
+```
+
+**`with-bpf-script`** - Lifecycle management:
+```clojure
+(with-bpf-script
+  {:maps   [binding1 map-spec1, binding2 map-spec2]
+   :progs  [binding1 prog-spec1, binding2 prog-spec2]
+   :attach [{:prog binding :type :xdp :target "eth0"}
+            {:prog binding :type :kprobe :function "schedule"}]}
+  body...)
+```
+
+**Supported Attachment Types:**
+- `:xdp` - XDP program attachment (`:target` interface, optional `:mode`, `:flags`)
+- `:tc` - Traffic Control (`:target` interface, `:direction`, `:priority`)
+- `:kprobe` / `:kretprobe` - Kernel probes (`:function` name)
+- `:tracepoint` - Tracepoints (`:category`, `:event`)
+- `:uprobe` / `:uretprobe` - User probes (`:binary`, `:symbol` or `:offset`)
+- `:cgroup-skb` / `:cgroup-sock` - Cgroup programs (`:cgroup-path`, `:direction`)
+- `:lsm` - LSM hooks (`:hook` name)
+
+**Convenience Functions:**
+```clojure
+;; Load program from defprogram spec
+(let [prog (bpf/load-defprogram my-prog-spec)]
+  ;; use prog...
+  )
+
+;; Create map from defmap-spec
+(let [m (bpf/create-defmap my-map-spec)]
+  ;; use map...
+  )
+```
+
+See `docs/guides/macros.md` for comprehensive documentation and `examples/macro_dsl.clj` for more examples.
 
 ### BPF Helper Functions Library
 
