@@ -246,6 +246,50 @@ Three powerful macros reduce boilerplate and make BPF programming more Clojure-l
 
 See the [Macros Guide](../docs/guides/macros.md) for comprehensive documentation.
 
+### Socket Redirection with SOCKMAP/SOCKHASH
+
+**[Quick Start: Socket Redirection](quick-start-sockmap.md)** - Build high-performance TCP proxies with kernel-level socket splicing!
+
+SOCKMAP and SOCKHASH enable zero-copy data transfer between sockets:
+
+```clojure
+(require '[clj-ebpf.maps :as maps]
+         '[clj-ebpf.dsl.socket :as socket]
+         '[clj-ebpf.programs :as progs])
+
+;; Create socket map
+(def sock-map (maps/create-sock-map 256 :map-name "proxy_sockets"))
+
+;; Build SK_SKB verdict that redirects to another socket
+(def verdict-bytecode
+  (dsl/assemble
+    (vec (concat
+           (socket/sk-skb-prologue :r2 :r3)
+           (socket/sk-redirect-map-with-fallback (:fd sock-map) 0)))))
+
+;; Load and attach to map
+(def verdict-prog (progs/load-program {:prog-type :sk-skb ...}))
+(progs/attach-sk-skb verdict-prog sock-map :stream-verdict)
+
+;; Add sockets - data now flows between them in kernel!
+(maps/map-update sock-map 0 client-fd)
+(maps/map-update sock-map 1 backend-fd)
+```
+
+**Use Cases:**
+- High-performance TCP proxies (zero-copy)
+- Service mesh sidecars
+- Load balancers with connection splicing
+- Application-transparent traffic redirection
+
+**Key Components:**
+- `create-sock-map` / `create-sock-hash` - Socket storage maps
+- `sk-skb-prologue` / `sk-msg-prologue` - Program prologues
+- `sk-redirect-map` / `msg-redirect-map` - Redirect helpers
+- `attach-sk-skb` / `attach-sk-msg` - Program attachment
+
+See the [Socket Redirection Guide](../docs/guides/sockmap-guide.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:

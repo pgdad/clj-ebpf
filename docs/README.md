@@ -32,6 +32,25 @@ Learn to write BPF applications with 60% less code using the declarative macros:
 
 See also: [Macros Tutorial](../tutorials/quick-start-macros.md) for hands-on examples.
 
+#### [Socket Redirection (SOCKMAP/SOCKHASH)](guides/sockmap-guide.md)
+
+Build high-performance socket proxies with kernel-level data transfer:
+
+**Topics Covered:**
+- SOCKMAP vs SOCKHASH map types
+- SK_SKB programs (stream parser and verdict)
+- SK_MSG programs for sendmsg redirection
+- DSL helpers for socket redirect operations
+- Echo server and TCP proxy patterns
+- Program attachment to socket maps
+
+**Target Audience:**
+- Developers building TCP proxies and load balancers
+- Service mesh implementations
+- High-performance networking applications
+
+See also: [SOCKMAP Tutorial](../tutorials/quick-start-sockmap.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -65,6 +84,7 @@ See the [`examples/`](../examples/) directory for runnable code:
 - **[simple_kprobe.clj](../examples/simple_kprobe.clj)** - Basic kprobe attachment and tracing (shows both traditional and macro approaches)
 - **[execve_tracer.clj](../examples/execve_tracer.clj)** - System call tracing with BPF maps
 - **[custom_helpers.clj](../examples/custom_helpers.clj)** - Complete example of defining and using custom helpers
+- **[sockmap_redirect.clj](../examples/sockmap_redirect.clj)** - Socket redirection with SOCKMAP and SOCKHASH
 
 Run examples:
 ```bash
