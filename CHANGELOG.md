@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.1] - 2025-12-29
+
+### Added
+- **DEVMAP and CPUMAP Support** for XDP packet redirection:
+  - `create-dev-map` - Array-based interface redirect map for L2 forwarding
+  - `create-dev-map-hash` - Hash-based interface redirect map for sparse mappings
+  - `create-cpu-map` - CPU steering map for custom RSS (Receive Side Scaling)
+- **XDP Redirect DSL Helpers** (`clj-ebpf.dsl.xdp`):
+  - `xdp-redirect` - Direct interface index redirect
+  - `xdp-redirect-map` - Map-based redirect for DEVMAP/CPUMAP/XSKMAP
+  - `xdp-redirect-to-interface` - Convenience helper for DEVMAP
+  - `xdp-redirect-to-cpu` - Convenience helper for CPUMAP
+- New BPF helper IDs in DSL:
+  - `redirect-map` (51), `sk-redirect-map` (52), `sock-map-update` (53), `xdp-adjust-meta` (54)
+- XDP redirect example (`examples/xdp_redirect_devmap.clj`)
+- 20 new tests for DEVMAP/CPUMAP with 55 assertions (CI-safe)
+
 ## [0.7.0] - 2025-12-29
 
 ### Added
