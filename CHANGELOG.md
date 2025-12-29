@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.2] - 2025-12-29
+
+### Added
+- **SOCKMAP and SOCKHASH Support** for socket redirection:
+  - `create-sock-map` - Array-based socket storage for SK_SKB/SK_MSG programs
+  - `create-sock-hash` - Hash-based socket storage with custom keys
+- **SK_SKB Program Support** (`clj-ebpf.dsl.socket`):
+  - `sk-skb-prologue` - Standard prologue for SK_SKB programs
+  - `sk-redirect-map` - Redirect stream data to socket in SOCKMAP
+  - `sk-redirect-hash` - Redirect stream data to socket in SOCKHASH
+  - `sk-skb-pass`, `sk-skb-drop` - Return patterns
+- **SK_MSG Program Support** (`clj-ebpf.dsl.socket`):
+  - `sk-msg-prologue` - Standard prologue for SK_MSG programs
+  - `msg-redirect-map` - Redirect message to socket in SOCKMAP
+  - `msg-redirect-hash` - Redirect message to socket in SOCKHASH
+  - `sk-msg-pass`, `sk-msg-drop` - Return patterns
+- **Socket Map Update Helpers**:
+  - `sock-map-update` - Add socket to SOCKMAP from BPF program
+  - `sock-hash-update` - Add socket to SOCKHASH from BPF program
+- **Program Attachment Functions** (`clj-ebpf.programs`):
+  - `attach-sk-skb` - Attach SK_SKB program to SOCKMAP/SOCKHASH
+  - `attach-sk-msg` - Attach SK_MSG program to SOCKMAP/SOCKHASH
+  - `detach-sk-skb`, `detach-sk-msg` - Detach programs from maps
+- New BPF helper IDs in DSL:
+  - `msg-redirect-map` (60), `sock-hash-update` (70)
+  - `msg-redirect-hash` (71), `sk-redirect-hash` (72)
+- SOCKMAP redirect example (`examples/sockmap_redirect.clj`)
+- 35 new tests for SOCKMAP/SOCKHASH (CI-safe)
+
 ## [0.7.1] - 2025-12-29
 
 ### Added
