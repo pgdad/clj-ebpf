@@ -179,6 +179,12 @@
    :get-socket-cookie      46
    :get-socket-uid         47
    :set-hash               48
+   :setsockopt             49
+   :skb-adjust-room        50
+   :redirect-map           51
+   :sk-redirect-map        52
+   :sock-map-update        53
+   :xdp-adjust-meta        54
    })
 
 ;; ============================================================================

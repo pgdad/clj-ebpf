@@ -1045,6 +1045,114 @@
                :max-entries max-entries
                :map-name map-name}))
 
+;; ============================================================================
+;; DEVMAP and CPUMAP - XDP Redirect Maps
+;; ============================================================================
+
+(defn create-dev-map
+  "Create a DEVMAP for XDP packet redirection to network interfaces.
+
+   DEVMAP is an array-based map used by XDP programs to redirect packets
+   to specific network interfaces. Each entry maps an index to an interface
+   index (ifindex).
+
+   Parameters:
+   - max-entries: Maximum number of entries (interfaces)
+
+   Optional keyword arguments:
+   - :map-name - Name for the map
+   - :value-size - Size of value in bytes (default: 4 for ifindex only,
+                   use 8 for bpf_devmap_val with XDP program FD)
+
+   Usage with XDP programs:
+   1. Create devmap and populate with interface indices
+   2. XDP program calls bpf_redirect_map(devmap, index, flags)
+   3. Packets are redirected to the interface at that index
+
+   Example:
+     (def dev-map (create-dev-map 64 :map-name \"tx_ports\"))
+     (map-update dev-map 0 (if-nametoindex \"eth0\"))
+     ;; In XDP program: bpf_redirect_map(&dev_map, 0, 0)"
+  [max-entries & {:keys [map-name value-size]
+                  :or {value-size 4}}]
+  (create-map {:map-type :devmap
+               :key-size 4        ; Array index (u32)
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-dev-map-hash
+  "Create a DEVMAP_HASH for XDP packet redirection with hash-based lookup.
+
+   Unlike regular DEVMAP (array-based), DEVMAP_HASH allows sparse or
+   non-contiguous indexing using arbitrary keys. This is useful when
+   you need to map by interface index directly rather than by array position.
+
+   Parameters:
+   - max-entries: Maximum number of entries
+
+   Optional keyword arguments:
+   - :key-size - Size of key in bytes (default: 4)
+   - :value-size - Size of value in bytes (default: 4 for ifindex only)
+   - :map-name - Name for the map
+
+   Example:
+     (def dev-map (create-dev-map-hash 256 :map-name \"if_redirect\"))
+     (let [eth0-idx (if-nametoindex \"eth0\")]
+       (map-update dev-map eth0-idx eth0-idx))
+     ;; In XDP: bpf_redirect_map(&dev_map, ifindex, 0)"
+  [max-entries & {:keys [key-size value-size map-name]
+                  :or {key-size 4 value-size 4}}]
+  (create-map {:map-type :devmap-hash
+               :key-size key-size
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
+(defn create-cpu-map
+  "Create a CPUMAP for XDP packet redirection to specific CPUs.
+
+   CPUMAP allows XDP programs to redirect packets to specific CPUs for
+   processing by the kernel networking stack. This enables custom RSS
+   (Receive Side Scaling) logic and load distribution.
+
+   Parameters:
+   - max-entries: Number of CPUs to support (typically num-cpus)
+
+   Optional keyword arguments:
+   - :map-name - Name for the map
+   - :value-size - Size of value in bytes (default: 8 for bpf_cpumap_val
+                   which includes qsize and optional bpf_prog fd)
+
+   The value is a bpf_cpumap_val struct:
+   - qsize (u32): Queue size for the target CPU
+   - bpf_prog.fd (u32): Optional XDP program to run on target CPU
+
+   Example:
+     (def cpu-map (create-cpu-map 8 :map-name \"cpu_redirect\"))
+     ;; Set CPU 0 with queue size 2048
+     (map-update cpu-map 0 2048)
+     ;; In XDP: bpf_redirect_map(&cpu_map, target_cpu, 0)"
+  [max-entries & {:keys [map-name value-size]
+                  :or {value-size 8}}]
+  (create-map {:map-type :cpumap
+               :key-size 4        ; CPU index (u32)
+               :value-size value-size
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/long->bytes
+               :value-deserializer utils/bytes->long}))
+
 ;; Macro for resource management
 
 (defmacro with-map

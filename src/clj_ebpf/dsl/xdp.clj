@@ -787,3 +787,127 @@
           [(dsl/jmp-imm :jne :r4 ip-addr 2)
            (dsl/mov :r0 (xdp-action action-on-match))
            (dsl/exit-insn)]))))
+
+;; ============================================================================
+;; XDP Redirect Helpers (DEVMAP, CPUMAP, XSKMAP)
+;; ============================================================================
+
+(defn xdp-redirect
+  "Generate call to bpf_redirect helper.
+
+   Redirects packet to another interface by ifindex.
+
+   Parameters:
+   - ifindex: Interface index to redirect to (or register containing it)
+   - flags: Flags (typically 0)
+
+   Returns vector of instructions.
+
+   Note: Program must return XDP_REDIRECT (4) after calling this.
+
+   Example:
+     (concat (xdp-redirect 2 0)    ; Redirect to ifindex 2
+             [(dsl/mov :r0 4)      ; XDP_REDIRECT
+              (dsl/exit-insn)])"
+  [ifindex flags]
+  (if (keyword? ifindex)
+    ;; ifindex is in a register
+    [(dsl/mov-reg :r1 ifindex)
+     (dsl/mov :r2 flags)
+     (dsl/call 23)]  ; BPF_FUNC_redirect
+    ;; ifindex is immediate
+    [(dsl/mov :r1 ifindex)
+     (dsl/mov :r2 flags)
+     (dsl/call 23)]))
+
+(defn xdp-redirect-map
+  "Generate call to bpf_redirect_map helper.
+
+   Redirects packet using a DEVMAP, CPUMAP, or XSKMAP lookup.
+   This is the preferred way to redirect packets when using redirect maps.
+
+   Parameters:
+   - map-fd: File descriptor of the redirect map
+   - key: Map key (index in DEVMAP/CPUMAP) - integer or register keyword
+   - flags: Flags (typically 0)
+
+   Returns vector of instructions.
+
+   The helper returns XDP_REDIRECT on success, or XDP_ABORTED on failure.
+   You should return r0 directly after calling this.
+
+   Example with DEVMAP:
+     ;; Redirect to interface at index 1 in dev-map
+     (concat (xdp-redirect-map (:fd dev-map) 1 0)
+             [(dsl/exit-insn)])  ; Return value from redirect_map
+
+   Example with dynamic key:
+     ;; Key computed in :r5
+     (concat (xdp-redirect-map (:fd dev-map) :r5 0)
+             [(dsl/exit-insn)])"
+  [map-fd key flags]
+  (if (keyword? key)
+    ;; key is in a register
+    [(dsl/ld-map-fd :r1 map-fd)
+     (dsl/mov-reg :r2 key)
+     (dsl/mov :r3 flags)
+     (dsl/call 51)]  ; BPF_FUNC_redirect_map
+    ;; key is immediate
+    [(dsl/ld-map-fd :r1 map-fd)
+     (dsl/mov :r2 key)
+     (dsl/mov :r3 flags)
+     (dsl/call 51)]))
+
+(defn xdp-redirect-map-with-action
+  "Generate XDP redirect_map call with proper return.
+
+   Convenience function that includes the exit instruction.
+   Returns the result of bpf_redirect_map directly.
+
+   Parameters:
+   - map-fd: File descriptor of redirect map
+   - key: Map key (integer or register keyword)
+   - flags: Flags (default 0)
+
+   Returns vector of instructions ending with exit.
+
+   Example:
+     (xdp-redirect-map-with-action (:fd dev-map) 0 0)"
+  ([map-fd key]
+   (xdp-redirect-map-with-action map-fd key 0))
+  ([map-fd key flags]
+   (vec (concat
+         (xdp-redirect-map map-fd key flags)
+         [(dsl/exit-insn)]))))
+
+(defn xdp-redirect-to-cpu
+  "Generate XDP redirect to a specific CPU using CPUMAP.
+
+   Convenience function for CPU redirection.
+
+   Parameters:
+   - cpumap-fd: File descriptor of CPUMAP
+   - cpu-index: Target CPU index (integer or register)
+   - flags: Flags (default 0)
+
+   Returns vector of instructions with exit."
+  ([cpumap-fd cpu-index]
+   (xdp-redirect-to-cpu cpumap-fd cpu-index 0))
+  ([cpumap-fd cpu-index flags]
+   (xdp-redirect-map-with-action cpumap-fd cpu-index flags)))
+
+(defn xdp-redirect-to-interface
+  "Generate XDP redirect to interface using DEVMAP.
+
+   Convenience function for interface redirection.
+
+   Parameters:
+   - devmap-fd: File descriptor of DEVMAP
+   - map-index: Index in DEVMAP (integer or register)
+   - flags: Flags (default 0)
+
+   Returns vector of instructions with exit."
+  ([devmap-fd map-index]
+   (xdp-redirect-to-interface devmap-fd map-index 0))
+  ([devmap-fd map-index flags]
+   (xdp-redirect-map-with-action devmap-fd map-index flags)))
