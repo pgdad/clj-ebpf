@@ -89,6 +89,26 @@ Implement custom socket dispatch and multi-tenant routing with SK_LOOKUP program
 
 See also: [SK_LOOKUP Tutorial](../tutorials/quick-start-sk-lookup.md) for hands-on examples.
 
+#### [Custom Packet Parsing (FLOW_DISSECTOR)](guides/flow-dissector-guide.md)
+
+Override the kernel's flow dissector for custom protocol handling:
+
+**Topics Covered:**
+- FLOW_DISSECTOR program structure
+- bpf_flow_keys output structure
+- Parsing Ethernet, IPv4, TCP/UDP headers
+- Custom protocol handling patterns
+- Network namespace attachment
+- DSL helpers for parsing and field access
+
+**Target Audience:**
+- Custom network protocol implementations
+- RSS optimization for specific traffic
+- ECMP routing customization
+- Network debugging and analysis
+
+See also: [FLOW_DISSECTOR Tutorial](../tutorials/quick-start-flow-dissector.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -125,6 +145,7 @@ See the [`examples/`](../examples/) directory for runnable code:
 - **[sockmap_redirect.clj](../examples/sockmap_redirect.clj)** - Socket redirection with SOCKMAP and SOCKHASH
 - **[xdp_xsk_redirect.clj](../examples/xdp_xsk_redirect.clj)** - AF_XDP zero-copy packet processing with XSKMAP
 - **[sk_lookup_steering.clj](../examples/sk_lookup_steering.clj)** - Programmable socket lookup and dispatch
+- **[flow_dissector_custom.clj](../examples/flow_dissector_custom.clj)** - Custom packet parsing for flow hashing
 
 Run examples:
 ```bash

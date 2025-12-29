@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.6] - 2025-12-29
+
+### Added
+- **FLOW_DISSECTOR Support** for custom packet parsing:
+  - `attach-flow-dissector` - Attach FLOW_DISSECTOR programs to network namespace
+  - `detach-flow-dissector` - Detach FLOW_DISSECTOR programs
+  - Enables custom flow hashing for RSS and ECMP routing
+- **FLOW_DISSECTOR DSL Helpers** (`clj-ebpf.dsl.flow-dissector`):
+  - `flow-dissector-prologue` - Standard prologue for FLOW_DISSECTOR programs
+  - `flow-dissector-get-flow-keys-ptr` - Get flow_keys output pointer
+  - `flow-keys-set-nhoff`, `flow-keys-set-thoff` - Set header offsets
+  - `flow-keys-set-addr-proto`, `flow-keys-set-ip-proto` - Set protocol info
+  - `flow-keys-set-ports`, `flow-keys-set-ipv4-addrs` - Set 5-tuple fields
+  - `flow-dissector-parse-ethernet` - Parse Ethernet header
+  - `flow-dissector-parse-ipv4` - Parse IPv4 header
+  - `flow-dissector-parse-tcp-ports`, `flow-dissector-parse-udp-ports` - Parse transport ports
+  - `flow-dissector-bounds-check` - Packet bounds checking pattern
+  - `flow-dissector-ok`, `flow-dissector-drop` - Return patterns
+  - `build-flow-dissector-program` - Program builder
+- **FLOW_DISSECTOR Tutorial** (`tutorials/quick-start-flow-dissector.md`):
+  - Comprehensive guide covering FLOW_DISSECTOR architecture
+  - bpf_flow_keys structure and field access
+  - Parsing patterns for Ethernet, IPv4, TCP/UDP
+  - Bounds checking and program building
+- **FLOW_DISSECTOR Guide** (`docs/guides/flow-dissector-guide.md`):
+  - Reference documentation for FLOW_DISSECTOR operations
+  - DSL function reference tables
+  - Protocol constants and header sizes
+  - Kernel version requirements (4.2+, 5.0+ for BPF link)
+- FLOW_DISSECTOR example (`examples/flow_dissector_custom.clj`)
+- 64 new tests for FLOW_DISSECTOR with 308 assertions (CI-safe)
+- Updated `tutorials/README.md` with FLOW_DISSECTOR section
+- Updated `docs/README.md` with FLOW_DISSECTOR guide entry
+
 ## [0.7.5] - 2025-12-29
 
 ### Added

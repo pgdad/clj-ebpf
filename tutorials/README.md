@@ -366,6 +366,49 @@ SK_LOOKUP programs intercept socket lookups and can select which socket handles 
 
 See the [SK_LOOKUP Guide](../docs/guides/sk-lookup-guide.md) for comprehensive documentation.
 
+### Custom Packet Parsing with FLOW_DISSECTOR
+
+**[Quick Start: FLOW_DISSECTOR](quick-start-flow-dissector.md)** - Implement custom packet parsing for RSS/ECMP flow hashing!
+
+FLOW_DISSECTOR programs override the kernel's flow dissector for custom protocol handling:
+
+```clojure
+(require '[clj-ebpf.dsl.flow-dissector :as fd])
+
+;; Build FLOW_DISSECTOR that parses IPv4/TCP 5-tuple
+(def bytecode
+  (dsl/assemble
+    (vec (concat
+          (fd/flow-dissector-prologue :r6 :r2 :r3)
+          [(fd/flow-dissector-get-flow-keys-ptr :r6 :r7)]
+          (fd/flow-dissector-parse-ethernet :r2 :r3 :r7 :r0)
+          (fd/flow-dissector-parse-ipv4 :r2 :r3 :r7 14 :r0 :r1)
+          (fd/flow-dissector-parse-tcp-ports :r2 :r3 :r7 34 :r0)
+          (fd/flow-dissector-ok)))))
+
+;; Load and attach to network namespace
+(def prog (progs/load-program
+            {:prog-type :flow-dissector
+             :insns bytecode
+             :license "GPL"}))
+(progs/attach-flow-dissector prog {})
+```
+
+**Use Cases:**
+- Custom protocol handling (GRE, VXLAN, proprietary encapsulation)
+- Protocol-specific flow hashing
+- RSS optimization for custom traffic
+- Debugging packet classification
+
+**Key Components:**
+- `flow-dissector-prologue` - Setup context and data pointers
+- `flow-dissector-parse-ethernet` - Parse Ethernet header
+- `flow-dissector-parse-ipv4` - Parse IPv4 header and addresses
+- `flow-dissector-parse-tcp-ports` - Parse TCP/UDP ports
+- `flow-keys-set-*` - Set individual flow_keys fields
+
+See the [FLOW_DISSECTOR Guide](../docs/guides/flow-dissector-guide.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:

@@ -1261,3 +1261,102 @@
             (log/warn "Failed to detach SK_LOOKUP:" e)))))
     ;; Return program with remaining attachments
     (assoc prog :attachments (vec other-attachments))))
+
+;; ============================================================================
+;; FLOW_DISSECTOR Program Attachment
+;; ============================================================================
+;;
+;; FLOW_DISSECTOR programs implement custom packet parsing for flow hashing
+;; (RSS, ECMP routing). They attach to a network namespace and override the
+;; kernel's built-in flow dissector for packets in that namespace.
+;;
+;; Use cases:
+;; - Custom protocol parsing (GRE, VXLAN, custom encapsulation)
+;; - Non-standard header handling
+;; - Protocol-specific flow hashing
+;; - Debugging packet classification
+
+(defn attach-flow-dissector
+  "Attach FLOW_DISSECTOR program to a network namespace.
+
+   FLOW_DISSECTOR programs implement custom packet parsing for flow hashing
+   (RSS, ECMP routing). They override the kernel's built-in flow dissector
+   for packets in the attached network namespace.
+
+   Parameters:
+   - prog: BpfProgram to attach (must be :flow-dissector type)
+   - opts: Map with:
+     - :netns-path - Path to network namespace (default: \"/proc/self/ns/net\")
+     - :netns-fd - Already-open network namespace FD (alternative to :netns-path)
+
+   Example:
+     ;; Attach to current network namespace
+     (attach-flow-dissector prog {})
+
+     ;; Attach to specific namespace
+     (attach-flow-dissector prog {:netns-path \"/proc/1234/ns/net\"})
+
+     ;; Attach with pre-opened FD
+     (attach-flow-dissector prog {:netns-fd netns-fd})
+
+   Returns updated program with attachment info.
+
+   Requirements:
+   - Kernel 4.2+ for basic FLOW_DISSECTOR support
+   - Kernel 5.0+ for full BPF link support
+   - CAP_NET_ADMIN capability"
+  [^BpfProgram prog {:keys [netns-path netns-fd]
+                     :or {netns-path "/proc/self/ns/net"}}]
+  (let [;; Get or open netns FD
+        netns-info (if netns-fd
+                    {:fd netns-fd :file nil :external true}
+                    (open-netns-fd netns-path))
+        netns-fd-num (:fd netns-info)
+
+        ;; Create the BPF link
+        link-fd (syscall/bpf-link-create-netns (:fd prog) netns-fd-num :flow-dissector)
+
+        ;; Create detach function
+        detach-fn (fn []
+                   (try
+                     (syscall/close-fd link-fd)
+                     (catch Exception e
+                       (log/warn "Failed to close BPF link:" e)))
+                   ;; Close netns FD if we opened it
+                   (when-let [file (:file netns-info)]
+                     (try
+                       (.close ^java.io.RandomAccessFile file)
+                       (catch Exception e
+                         (log/warn "Failed to close netns file:" e)))))
+
+        attachment (->ProgramAttachment
+                    :flow-dissector
+                    (or netns-path (str "netns-fd:" netns-fd))
+                    link-fd
+                    detach-fn)]
+
+    (log/info "Attached FLOW_DISSECTOR program to" (or netns-path "netns")
+              "link-fd:" link-fd)
+
+    ;; Add attachment to program
+    (update prog :attachments conj attachment)))
+
+(defn detach-flow-dissector
+  "Detach FLOW_DISSECTOR program from network namespace.
+
+   Parameters:
+   - prog: BpfProgram with FLOW_DISSECTOR attachment
+
+   Returns updated program without the attachment."
+  [^BpfProgram prog]
+  (let [fd-attachments (filter #(= :flow-dissector (:type %)) (:attachments prog))
+        other-attachments (remove #(= :flow-dissector (:type %)) (:attachments prog))]
+    ;; Detach all FLOW_DISSECTOR attachments
+    (doseq [attachment fd-attachments]
+      (when-let [detach-fn (:detach-fn attachment)]
+        (try
+          (detach-fn)
+          (catch Exception e
+            (log/warn "Failed to detach FLOW_DISSECTOR:" e)))))
+    ;; Return program with remaining attachments
+    (assoc prog :attachments (vec other-attachments))))
