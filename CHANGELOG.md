@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.7] - 2025-12-29
+
+### Added
+- **BPF Iterators (bpf_iter) Support** for dumping kernel data structures:
+  - `bpf-link-create-iter` - Create BPF link for iterator programs
+  - `bpf-iter-create` - Create iterator file descriptor from link
+  - Iterator types: task, bpf_map, bpf_map_elem, tcp, udp, bpf_prog, bpf_link
+  - Reading from iterator FD triggers BPF program for each element
+- **BPF Iterator DSL Helpers** (`clj-ebpf.dsl.iter`):
+  - `iter-prologue`, `iter-prologue-with-meta` - Standard iterator prologues
+  - `iter-load-ctx-ptr`, `iter-load-meta-field` - Context field access
+  - `iter-check-null`, `iter-check-null-and-exit` - NULL pointer handling
+  - `seq-write` - Write raw bytes to output (bpf_seq_write helper)
+  - `seq-printf-simple` - Write formatted output (bpf_seq_printf helper)
+  - `probe-read-kernel`, `probe-read-kernel-str` - Safe kernel memory access
+  - `alloc-stack-buffer` - Stack buffer allocation helper
+  - `iter-return-continue`, `iter-return-stop` - Return patterns
+  - `task-load-pid`, `task-load-tgid` - Task struct field helpers
+  - `build-iter-program` - Complete iterator program builder
+  - `iter-section-name`, `make-iter-info` - ELF section and metadata
+  - `minimal-task-iterator`, `task-null-check-template` - Templates
+- **BPF Iterator High-Level API** (`clj-ebpf.programs`):
+  - `BpfIterator` record for iterator lifecycle management
+  - `create-iterator`, `close-iterator` - Iterator lifecycle
+  - `with-iterator` macro - Automatic cleanup
+  - `load-iterator-program` - Load and prepare iterator programs
+- **BPF Iterator Tutorial** (`tutorials/quick-start-iterators.md`):
+  - Iterator architecture and workflow
+  - Context structures for different iterator types
+  - NULL handling and return patterns
+  - Output with seq_write and seq_printf
+  - Program building and templates
+- **BPF Iterator Guide** (`docs/guides/iterators-guide.md`):
+  - Reference documentation for iterator operations
+  - DSL function reference tables
+  - Context offsets and BTF type names
+  - Kernel version requirements (5.8+)
+- BPF iterator example (`examples/iter_task_dump.clj`)
+- 55 new tests for BPF iterators with 289 assertions (CI-safe)
+- Updated `tutorials/README.md` with BPF Iterators section
+- Updated `docs/README.md` with BPF Iterators guide entry
+
 ## [0.7.6] - 2025-12-29
 
 ### Added

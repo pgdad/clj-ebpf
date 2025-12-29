@@ -1360,3 +1360,120 @@
             (log/warn "Failed to detach FLOW_DISSECTOR:" e)))))
     ;; Return program with remaining attachments
     (assoc prog :attachments (vec other-attachments))))
+
+;; ============================================================================
+;; BPF Iterator Support
+;; ============================================================================
+;;
+;; BPF Iterators allow BPF programs to dump kernel data structures by
+;; iterating over them. Unlike event-triggered programs, iterators are
+;; triggered by reading from a file descriptor.
+;;
+;; Workflow:
+;; 1. Load iterator program (type :tracing, attach type :trace-iter)
+;; 2. Create BPF link
+;; 3. Create iterator FD from link
+;; 4. Read from iterator FD to invoke BPF program
+;;
+;; Common iterator types:
+;; - task: Iterate over all processes
+;; - bpf_map: Iterate over BPF maps
+;; - tcp/udp: Iterate over sockets
+
+(defrecord BpfIterator [prog link-fd iter-fd iter-type])
+
+(defn create-iterator
+  "Create a BPF iterator from a loaded program.
+
+   This creates the link and iterator FD needed to read from the iterator.
+
+   Parameters:
+   - prog: BpfProgram (must be :tracing type with :trace-iter attach)
+   - opts: Map with:
+     - :iter-type - Iterator type keyword (e.g., :task, :bpf-map)
+
+   Returns BpfIterator record with:
+   - :prog - Original program
+   - :link-fd - BPF link file descriptor
+   - :iter-fd - Iterator file descriptor (readable)
+   - :iter-type - Iterator type
+
+   Example:
+     (def iter (create-iterator prog {:iter-type :task}))"
+  [^BpfProgram prog {:keys [iter-type]
+                     :or {iter-type :task}}]
+  (let [;; Create the BPF link for the iterator
+        link-fd (syscall/bpf-link-create-iter (:fd prog) {:iter-type iter-type})
+
+        ;; Create the iterator FD from the link
+        iter-fd (syscall/bpf-iter-create link-fd 0)]
+
+    (log/info "Created BPF iterator type:" iter-type "iter-fd:" iter-fd)
+
+    (->BpfIterator prog link-fd iter-fd iter-type)))
+
+(defn close-iterator
+  "Close a BPF iterator and release resources.
+
+   Parameters:
+   - iter: BpfIterator record"
+  [^BpfIterator iter]
+  (when-let [iter-fd (:iter-fd iter)]
+    (try
+      (syscall/close-fd iter-fd)
+      (catch Exception e
+        (log/warn "Failed to close iterator fd:" e))))
+  (when-let [link-fd (:link-fd iter)]
+    (try
+      (syscall/close-fd link-fd)
+      (catch Exception e
+        (log/warn "Failed to close link fd:" e))))
+  (log/info "Closed BPF iterator type:" (:iter-type iter)))
+
+(defmacro with-iterator
+  "Execute body with an iterator, ensuring cleanup.
+
+   Parameters:
+   - bindings: [iter-sym prog opts] or [iter-sym iterator-record]
+   - body: Forms to execute
+
+   Example:
+     (with-iterator [iter prog {:iter-type :task}]
+       (println (read-iterator-all iter {})))"
+  [[iter-sym & args] & body]
+  (if (= 2 (count args))
+    ;; [iter-sym prog opts] form
+    `(let [~iter-sym (create-iterator ~(first args) ~(second args))]
+       (try
+         ~@body
+         (finally
+           (close-iterator ~iter-sym))))
+    ;; [iter-sym iterator] form
+    `(let [~iter-sym ~(first args)]
+       (try
+         ~@body
+         (finally
+           (close-iterator ~iter-sym))))))
+
+(defn load-iterator-program
+  "Load a BPF program suitable for iterator use.
+
+   This is a convenience function that loads a program with the
+   correct type and attach type for iterators.
+
+   Parameters:
+   - bytecode: Assembled program bytecode
+   - iter-type: Iterator type keyword (e.g., :task, :bpf-map)
+   - opts: Additional options:
+     - :prog-name - Program name
+     - :license - License string (default \"GPL\")
+
+   Returns loaded BpfProgram."
+  [bytecode iter-type {:keys [prog-name license]
+                       :or {license "GPL"}}]
+  (load-program
+   {:prog-type :tracing
+    :expected-attach-type :trace-iter
+    :insns bytecode
+    :license license
+    :prog-name (or prog-name (str "iter_" (name iter-type)))}))

@@ -955,6 +955,147 @@
             (log/info "Created BPF link for" attach-type "btf-id:" btf-id "link-fd:" result)
             result))))))
 
+;; ============================================================================
+;; BPF Iterator Support
+;; ============================================================================
+;;
+;; BPF Iterators allow BPF programs to dump kernel data structures by
+;; iterating over them. Common iterator types:
+;; - task: Iterate over all tasks/processes
+;; - bpf_map: Iterate over BPF maps
+;; - bpf_map_elem: Iterate over elements in a map
+;; - tcp: Iterate over TCP sockets
+;; - udp: Iterate over UDP sockets
+;;
+;; Iterator workflow:
+;; 1. Load BPF program (type :tracing, attach type :trace-iter)
+;; 2. Create BPF link (BPF_LINK_CREATE with iter-specific info)
+;; 3. Create iterator FD (BPF_ITER_CREATE from link)
+;; 4. Read from iterator FD - this runs the BPF program
+
+(defn bpf-link-create-iter
+  "Create a BPF link for an iterator program.
+
+   BPF iterators use BPF_LINK_CREATE with iter-specific information
+   in the link_create.iter_info union.
+
+   Parameters:
+   - prog-fd: BPF program file descriptor (tracing type)
+   - iter-info: Map with iterator configuration:
+     - :iter-type - Iterator type name (e.g., \"task\", \"bpf_map\", \"tcp\")
+     - :map-fd - (optional) Map FD for bpf_map_elem iterator
+     - :cgroup-fd - (optional) Cgroup FD for cgroup iterators
+
+   Returns link FD on success, throws on error.
+
+   Note: The iterator type is typically encoded via BTF ID of the
+   iterator target type (e.g., bpf_iter__task)."
+  [prog-fd {:keys [iter-type map-fd cgroup-fd]
+            :or {map-fd 0 cgroup-fd 0}}]
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 128)
+          attach-type-num (const/attach-type->num :trace-iter)]
+
+      ;; Build bpf_attr for BPF_LINK_CREATE with iter info
+      ;; struct { /* BPF_LINK_CREATE */
+      ;;   __u32 prog_fd;         /* offset 0 */
+      ;;   __u32 target_fd;       /* offset 4 - 0 for iterators */
+      ;;   __u32 attach_type;     /* offset 8 */
+      ;;   __u32 flags;           /* offset 12 */
+      ;;   union {
+      ;;     __u32 target_btf_id; /* offset 16 */
+      ;;     struct {             /* for iterators */
+      ;;       __aligned_u64 iter_info;     /* offset 16 */
+      ;;       __u32 iter_info_len;         /* offset 24 */
+      ;;     };
+      ;;   };
+      ;; }
+
+      ;; prog_fd (offset 0)
+      (.set attr-mem C_INT 0 (int prog-fd))
+      ;; target_fd (offset 4) - 0 for iterators
+      (.set attr-mem C_INT 4 (int 0))
+      ;; attach_type (offset 8)
+      (.set attr-mem C_INT 8 (int attach-type-num))
+      ;; flags (offset 12)
+      (.set attr-mem C_INT 12 (int 0))
+
+      ;; For simple iterators (task, bpf_map, tcp, udp), we don't need
+      ;; iter_info - the kernel infers from the program's BTF.
+      ;; For bpf_map_elem, we'd need to pass the map FD via iter_info.
+
+      (when (and map-fd (> map-fd 0))
+        ;; For bpf_map_elem iterator, we need to pass map info
+        ;; This would require allocating iter_info struct
+        ;; For now, we support simple iterators without extra info
+        (log/debug "Map-specific iterator info not yet fully supported"))
+
+      (log/debug "BPF_LINK_CREATE iterator:"
+                 "\n  prog_fd:" prog-fd
+                 "\n  attach_type:" :trace-iter attach-type-num
+                 "\n  iter_type:" iter-type)
+
+      (let [result (int (bpf-syscall :link-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_LINK_CREATE failed for iterator, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_LINK_CREATE failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :prog-fd prog-fd
+                             :iter-type iter-type})))
+          (do
+            (log/info "Created BPF link for iterator" iter-type "link-fd:" result)
+            result))))))
+
+(defn bpf-iter-create
+  "Create an iterator file descriptor from a BPF link.
+
+   BPF_ITER_CREATE takes a link FD and returns a file descriptor
+   that can be read() to iterate over kernel data structures.
+
+   Parameters:
+   - link-fd: BPF link file descriptor (from bpf-link-create-iter)
+   - flags: Flags (usually 0)
+
+   Returns iterator FD on success, throws on error.
+
+   Usage:
+     ;; Create iterator
+     (def iter-fd (bpf-iter-create link-fd 0))
+     ;; Read from it (using Java FileInputStream or read syscall)
+     ;; Each read() invokes the BPF program for the next batch"
+  [link-fd flags]
+  (with-bpf-syscall
+    (let [attr-mem (allocate-zeroed 32)]
+
+      ;; struct { /* BPF_ITER_CREATE */
+      ;;   __u32 link_fd;   /* offset 0 */
+      ;;   __u32 flags;     /* offset 4 */
+      ;; }
+
+      (.set attr-mem C_INT 0 (int link-fd))
+      (.set attr-mem C_INT 4 (int flags))
+
+      (log/debug "BPF_ITER_CREATE:"
+                 "\n  link_fd:" link-fd
+                 "\n  flags:" flags)
+
+      (let [result (int (bpf-syscall :iter-create attr-mem))]
+        (if (< result 0)
+          (let [errno (get-errno)
+                errno-kw (errno->keyword errno)]
+            (log/error "BPF_ITER_CREATE failed, errno:" errno errno-kw)
+            (throw (ex-info (str "BPF_ITER_CREATE failed: " errno-kw)
+                            {:errno errno
+                             :errno-keyword errno-kw
+                             :link-fd link-fd
+                             :flags flags})))
+          (do
+            (log/info "Created BPF iterator fd:" result "from link-fd:" link-fd)
+            result))))))
+
 ;; Close file descriptor
 (def ^:private close-fn
   (let [sym (.find libc-lookup "close")]

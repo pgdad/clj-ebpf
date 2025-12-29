@@ -109,6 +109,26 @@ Override the kernel's flow dissector for custom protocol handling:
 
 See also: [FLOW_DISSECTOR Tutorial](../tutorials/quick-start-flow-dissector.md) for hands-on examples.
 
+#### [BPF Iterators (bpf_iter)](guides/iterators-guide.md)
+
+Iterate over kernel data structures to dump processes, sockets, and BPF objects:
+
+**Topics Covered:**
+- Iterator types (task, bpf_map, bpf_map_elem, tcp, udp, etc.)
+- Iterator context structures and field access
+- Output with bpf_seq_write and bpf_seq_printf
+- NULL handling at end of iteration
+- Safe kernel memory access with probe_read
+- Program building and high-level API
+
+**Target Audience:**
+- System introspection and debugging tools
+- Custom /proc file replacements
+- BPF object inspection utilities
+- Process and socket monitoring applications
+
+See also: [BPF Iterators Tutorial](../tutorials/quick-start-iterators.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -146,6 +166,7 @@ See the [`examples/`](../examples/) directory for runnable code:
 - **[xdp_xsk_redirect.clj](../examples/xdp_xsk_redirect.clj)** - AF_XDP zero-copy packet processing with XSKMAP
 - **[sk_lookup_steering.clj](../examples/sk_lookup_steering.clj)** - Programmable socket lookup and dispatch
 - **[flow_dissector_custom.clj](../examples/flow_dissector_custom.clj)** - Custom packet parsing for flow hashing
+- **[iter_task_dump.clj](../examples/iter_task_dump.clj)** - BPF iterators for dumping kernel data
 
 Run examples:
 ```bash

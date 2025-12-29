@@ -409,6 +409,53 @@ FLOW_DISSECTOR programs override the kernel's flow dissector for custom protocol
 
 See the [FLOW_DISSECTOR Guide](../docs/guides/flow-dissector-guide.md) for comprehensive documentation.
 
+### Kernel Data Dumping with BPF Iterators
+
+**[Quick Start: BPF Iterators](quick-start-iterators.md)** - Dump kernel data structures like processes, sockets, and BPF objects!
+
+BPF Iterators (bpf_iter) iterate over kernel data and output results:
+
+```clojure
+(require '[clj-ebpf.dsl.iter :as iter])
+
+;; Build task iterator that dumps all processes
+(def bytecode
+  (dsl/assemble
+    (vec (concat
+          (iter/iter-prologue-with-meta :r6 :r8)
+          [(iter/iter-load-ctx-ptr :r6 :r7 :task)]
+          (iter/iter-check-null-and-exit :r7)
+          ;; Allocate stack buffer and read PID
+          [(iter/alloc-stack-buffer :r9 -32)]
+          (iter/probe-read-kernel :r9 4 :r7)
+          (iter/seq-write :r8 :r9 4)
+          (iter/iter-return-continue)))))
+
+;; Load and create iterator
+(def prog (progs/load-iterator-program
+            bytecode :task
+            {:license "GPL" :prog-name "task_dump"}))
+(progs/with-iterator [iter prog {:iter-type :task}]
+  (let [output (slurp (str "/proc/self/fd/" (:iter-fd iter)))]
+    (println output)))
+```
+
+**Iterator Types:**
+- `task` - All processes/threads
+- `bpf_map` - All BPF maps
+- `bpf_map_elem` - Elements in a specific map
+- `tcp/udp` - TCP/UDP sockets
+- `bpf_prog/bpf_link` - BPF objects
+
+**Key Components:**
+- `iter-prologue` / `iter-prologue-with-meta` - Program prologues
+- `iter-load-ctx-ptr` - Load pointer from context
+- `iter-check-null-and-exit` - Handle end of iteration
+- `seq-write` - Write bytes to output
+- `probe-read-kernel` - Safely read kernel memory
+
+See the [BPF Iterators Guide](../docs/guides/iterators-guide.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:
