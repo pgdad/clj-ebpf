@@ -51,6 +51,25 @@ Build high-performance socket proxies with kernel-level data transfer:
 
 See also: [SOCKMAP Tutorial](../tutorials/quick-start-sockmap.md) for hands-on examples.
 
+#### [AF_XDP Zero-Copy Networking (XSKMAP)](guides/xskmap-guide.md)
+
+Deliver packets directly to userspace with zero-copy using AF_XDP:
+
+**Topics Covered:**
+- XSKMAP map creation and structure
+- XDP redirect to XSK patterns
+- DSL helpers for XSK redirection
+- AF_XDP architecture overview
+- Performance optimization tips
+
+**Target Audience:**
+- High-performance packet processing applications
+- Network functions (NFV)
+- Packet capture and analysis tools
+- Trading systems requiring ultra-low latency
+
+See also: [XSKMAP Tutorial](../tutorials/quick-start-xskmap.md) for hands-on examples.
+
 ### Extending clj-ebpf
 
 #### [Adding New Helper Functions](adding-new-helpers.md)
@@ -85,6 +104,7 @@ See the [`examples/`](../examples/) directory for runnable code:
 - **[execve_tracer.clj](../examples/execve_tracer.clj)** - System call tracing with BPF maps
 - **[custom_helpers.clj](../examples/custom_helpers.clj)** - Complete example of defining and using custom helpers
 - **[sockmap_redirect.clj](../examples/sockmap_redirect.clj)** - Socket redirection with SOCKMAP and SOCKHASH
+- **[xdp_xsk_redirect.clj](../examples/xdp_xsk_redirect.clj)** - AF_XDP zero-copy packet processing with XSKMAP
 
 Run examples:
 ```bash

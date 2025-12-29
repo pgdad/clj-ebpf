@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.7.4] - 2025-12-29
+
+### Added
+- **XSKMAP Support** for AF_XDP zero-copy packet processing:
+  - `create-xsk-map` - XDP Socket Map for AF_XDP (XSK) file descriptors
+  - Maps queue indices to AF_XDP socket file descriptors
+  - Enables zero-copy packet delivery to userspace
+- **XDP Redirect to XSK Helpers** (`clj-ebpf.dsl.xdp`):
+  - `xdp-redirect-to-xsk` - Redirect packets to AF_XDP socket in XSKMAP
+  - `xdp-redirect-to-xsk-by-queue` - Redirect based on rx_queue_index (common pattern)
+  - Supports both immediate queue index and register-based lookup
+- **XSKMAP Tutorial** (`tutorials/quick-start-xskmap.md`):
+  - Comprehensive guide covering AF_XDP architecture
+  - UMEM and ring buffer concepts
+  - XDP program building patterns
+  - Performance optimization tips
+- **XSKMAP Guide** (`docs/guides/xskmap-guide.md`):
+  - Reference documentation for XSKMAP operations
+  - DSL function reference table
+  - xdp_md context field offsets
+  - Kernel version requirements (4.18+)
+- XSKMAP example (`examples/xdp_xsk_redirect.clj`)
+- 22 new tests for XSKMAP with 84 assertions (CI-safe)
+- Updated `tutorials/README.md` with XSKMAP section
+- Updated `docs/README.md` with XSKMAP guide entry
+
 ## [0.7.3] - 2025-12-29
 
 ### Added

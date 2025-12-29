@@ -911,3 +911,60 @@
    (xdp-redirect-to-interface devmap-fd map-index 0))
   ([devmap-fd map-index flags]
    (xdp-redirect-map-with-action devmap-fd map-index flags)))
+
+(defn xdp-redirect-to-xsk
+  "Generate XDP redirect to AF_XDP socket using XSKMAP.
+
+   Convenience function for redirecting packets to userspace via AF_XDP.
+   Typically used with the RX queue index as the key.
+
+   Parameters:
+   - xskmap-fd: File descriptor of XSKMAP
+   - queue-index: Queue index in XSKMAP (integer or register keyword)
+   - flags: Flags (default XDP_PASS=2 as fallback action if no socket)
+
+   Returns vector of instructions with exit.
+
+   Common pattern - redirect based on RX queue:
+     ;; Load rx_queue_index from xdp_md context
+     (xdp-load-ctx-field :r1 :rx-queue-index :r4)
+     ;; Redirect to XSK socket for this queue
+     (xdp-redirect-to-xsk xsk-map-fd :r4)
+
+   Note: If no XSK socket is registered at the queue index, the packet
+   falls back to the action specified in flags (default: XDP_PASS)."
+  ([xskmap-fd queue-index]
+   (xdp-redirect-to-xsk xskmap-fd queue-index 2))  ; XDP_PASS as fallback
+  ([xskmap-fd queue-index flags]
+   (xdp-redirect-map-with-action xskmap-fd queue-index flags)))
+
+(defn xdp-redirect-to-xsk-by-queue
+  "Generate XDP program fragment that redirects to XSK based on rx_queue_index.
+
+   This is the most common AF_XDP pattern: redirect packets to the XSK
+   socket registered for the queue they arrived on.
+
+   Parameters:
+   - ctx-reg: Register containing xdp_md pointer
+   - xskmap-fd: File descriptor of XSKMAP
+   - tmp-reg: Temporary register for queue index (default :r4)
+   - flags: Fallback flags (default XDP_PASS=2)
+
+   Returns vector of instructions that:
+   1. Loads rx_queue_index from context
+   2. Calls bpf_redirect_map with XSKMAP
+   3. Exits with the redirect result
+
+   Example:
+     ;; In XDP program body after prologue:
+     (xdp-redirect-to-xsk-by-queue :r6 (:fd xsk-map))"
+  ([ctx-reg xskmap-fd]
+   (xdp-redirect-to-xsk-by-queue ctx-reg xskmap-fd :r4 2))
+  ([ctx-reg xskmap-fd tmp-reg]
+   (xdp-redirect-to-xsk-by-queue ctx-reg xskmap-fd tmp-reg 2))
+  ([ctx-reg xskmap-fd tmp-reg flags]
+   (vec (concat
+         ;; Load rx_queue_index from xdp_md
+         [(xdp-load-ctx-field ctx-reg :rx-queue-index tmp-reg)]
+         ;; Redirect to XSK at this queue index
+         (xdp-redirect-to-xsk xskmap-fd tmp-reg flags)))))

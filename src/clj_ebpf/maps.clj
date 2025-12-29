@@ -1237,6 +1237,66 @@
                :value-serializer utils/int->bytes
                :value-deserializer utils/bytes->int}))
 
+;; ============================================================================
+;; XSKMAP - AF_XDP Socket Maps
+;; ============================================================================
+
+(defn create-xsk-map
+  "Create an XSKMAP for AF_XDP (XDP Sockets) zero-copy packet processing.
+
+   XSKMAP is the kernel-side component of AF_XDP, a high-performance
+   networking technology that allows packets to be delivered directly
+   to userspace via shared memory (UMEM) with zero-copy.
+
+   XDP programs use bpf_redirect_map() with XSKMAP to redirect packets
+   to specific AF_XDP sockets based on RX queue index or custom logic.
+
+   Parameters:
+   - max-entries: Maximum number of XSK sockets (typically matches number
+                  of RX queues on the interface)
+
+   Optional keyword arguments:
+   - :map-name - Name for the map
+
+   Map structure:
+   - Key: u32 index (typically RX queue index)
+   - Value: XSK socket file descriptor (the kernel converts this to an
+            internal xsk_sock structure)
+
+   Usage pattern:
+   1. Create XSKMAP in userspace
+   2. Create AF_XDP socket(s) with socket(AF_XDP, SOCK_RAW, 0)
+   3. Bind XSK socket to interface and queue with bind()
+   4. Add XSK socket FD to XSKMAP at queue index
+   5. Attach XDP program that calls bpf_redirect_map(xskmap, rx_queue_idx, 0)
+   6. Packets for that queue are delivered to userspace via UMEM ring buffers
+
+   Example:
+     ;; Create map for 4 RX queues
+     (def xsk-map (create-xsk-map 4 :map-name \"xsks_map\"))
+
+     ;; In XDP program, redirect to XSK based on queue:
+     ;; r4 = xdp_md->rx_queue_index
+     ;; return bpf_redirect_map(&xsks_map, r4, XDP_PASS)
+
+   Note: This creates only the BPF map. Full AF_XDP requires:
+   - Creating AF_XDP sockets (outside clj-ebpf scope)
+   - Setting up UMEM shared memory regions
+   - Managing RX/TX/completion/fill rings
+   See kernel documentation or libxdp for full AF_XDP setup.
+
+   Kernel requirements: Linux 4.18+ for basic XSKMAP, 5.3+ for full features."
+  [max-entries & {:keys [map-name]}]
+  (create-map {:map-type :xskmap
+               :key-size 4        ; Queue index (u32)
+               :value-size 4      ; XSK socket FD (u32)
+               :max-entries max-entries
+               :map-name map-name
+               :key-serializer utils/int->bytes
+               :key-deserializer utils/bytes->int
+               :value-serializer utils/int->bytes
+               :value-deserializer utils/bytes->int}))
+
 ;; Macro for resource management
 
 (defmacro with-map

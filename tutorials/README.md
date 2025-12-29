@@ -290,6 +290,47 @@ SOCKMAP and SOCKHASH enable zero-copy data transfer between sockets:
 
 See the [Socket Redirection Guide](../docs/guides/sockmap-guide.md) for comprehensive documentation.
 
+### AF_XDP Zero-Copy Networking with XSKMAP
+
+**[Quick Start: AF_XDP with XSKMAP](quick-start-xskmap.md)** - Deliver packets directly to userspace with zero-copy!
+
+XSKMAP enables high-performance packet processing by bypassing the kernel network stack:
+
+```clojure
+(require '[clj-ebpf.maps :as maps]
+         '[clj-ebpf.dsl :as dsl]
+         '[clj-ebpf.dsl.xdp :as xdp])
+
+;; Create XSKMAP for AF_XDP sockets
+(def xsk-map (maps/create-xsk-map 4 :map-name "xsks"))
+
+;; XDP program redirects packets to XSK based on queue
+(def xdp-bytecode
+  (dsl/assemble
+    (vec (concat
+          [(dsl/mov-reg :r6 :r1)
+           (dsl/ldx :w :r4 :r6 16)]  ; rx_queue_index
+          (xdp/xdp-redirect-to-xsk (:fd xsk-map) :r4)))))
+
+;; Attach XDP program
+(bpf/attach-xdp prog "eth0" :mode :native)
+```
+
+**Use Cases:**
+- Packet capture at line rate
+- Custom protocol processing
+- High-frequency trading systems
+- Network functions (NFV)
+- Ultra-low latency applications
+
+**Key Components:**
+- `create-xsk-map` - AF_XDP socket storage
+- `xdp-redirect-to-xsk` - Redirect to XSK socket
+- `xdp-redirect-to-xsk-by-queue` - Common redirect pattern
+- `xdp-load-ctx-field :rx-queue-index` - Get queue for XSKMAP key
+
+See the [XSKMAP Guide](../docs/guides/xskmap-guide.md) for comprehensive documentation.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:
