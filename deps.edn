@@ -39,6 +39,7 @@
             :main-opts ["-m" "cognitect.test-runner"]
             :exec-fn cognitect.test-runner.api/test
             :exec-args {:nses [clj-ebpf.utils-test
+                               clj-ebpf.macros-test
                                clj-ebpf.dsl-test
                                clj-ebpf.constants-test
                                clj-ebpf.dsl-examples-test
