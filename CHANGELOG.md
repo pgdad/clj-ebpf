@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet
+
+## [0.7.0] - 2025-12-29
+
 ### Added
 - **High-Level Declarative Macros** (`clj-ebpf.macros`) - New macro system that
   reduces boilerplate by 60% and provides a more Clojure-idiomatic API:
