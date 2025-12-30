@@ -291,3 +291,195 @@
         (finally
           (doseq [f files]
             (.delete (File. f))))))))
+
+;; ============================================================================
+;; File Read/Write Tests
+;; ============================================================================
+
+(deftest test-file-write-basic
+  (testing "Write string to file"
+    (let [test-file (str "/tmp/clj-ebpf-test-write-" (System/currentTimeMillis) ".txt")
+          test-data "Hello, World!\n"
+          fd (syscall/file-open test-file
+                                (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                                0644)]
+      (try
+        (let [written (syscall/file-write fd test-data)]
+          (is (= (count test-data) written)))
+        (syscall/close-fd fd)
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Write byte array to file"
+    (let [test-file (str "/tmp/clj-ebpf-test-write-bytes-" (System/currentTimeMillis) ".txt")
+          test-bytes (byte-array [72 101 108 108 111])  ; "Hello"
+          fd (syscall/file-open test-file
+                                (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                                0644)]
+      (try
+        (let [written (syscall/file-write fd test-bytes)]
+          (is (= 5 written)))
+        (syscall/close-fd fd)
+        (finally
+          (.delete (File. test-file)))))))
+
+(deftest test-file-read-basic
+  (testing "Read from file"
+    (let [test-file (str "/tmp/clj-ebpf-test-read-" (System/currentTimeMillis) ".txt")
+          test-data "Test content for reading\n"]
+      ;; Create file with content
+      (spit test-file test-data)
+      (try
+        (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+              data (syscall/file-read fd 1024)]
+          (is (= (count test-data) (count data)))
+          (is (= test-data (String. data)))
+          (syscall/close-fd fd))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Read less than file size"
+    (let [test-file (str "/tmp/clj-ebpf-test-read-partial-" (System/currentTimeMillis) ".txt")]
+      (spit test-file "0123456789")
+      (try
+        (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+              data (syscall/file-read fd 5)]
+          (is (= 5 (count data)))
+          (is (= "01234" (String. data)))
+          (syscall/close-fd fd))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Read returns empty on EOF"
+    (let [test-file (str "/tmp/clj-ebpf-test-eof-" (System/currentTimeMillis) ".txt")]
+      (spit test-file "short")
+      (try
+        (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+              data1 (syscall/file-read fd 1024)
+              data2 (syscall/file-read fd 1024)]
+          (is (= 5 (count data1)))
+          (is (= 0 (count data2)))  ; EOF
+          (syscall/close-fd fd))
+        (finally
+          (.delete (File. test-file)))))))
+
+(deftest test-file-read-write-roundtrip
+  (testing "Write then read same data"
+    (let [test-file (str "/tmp/clj-ebpf-test-roundtrip-" (System/currentTimeMillis) ".txt")
+          test-data "Round-trip test data!\nLine 2\nLine 3\n"]
+      (try
+        ;; Write
+        (let [fd (syscall/file-open test-file
+                                    (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                                    0644)]
+          (syscall/file-write fd test-data)
+          (syscall/close-fd fd))
+        ;; Read
+        (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+              data (syscall/file-read fd 1024)]
+          (is (= test-data (String. data)))
+          (syscall/close-fd fd))
+        (finally
+          (.delete (File. test-file)))))))
+
+(deftest test-file-read-special-files
+  (testing "Read from /dev/zero"
+    (let [fd (syscall/file-open "/dev/zero" syscall/O_RDONLY)
+          data (syscall/file-read fd 16)]
+      (is (= 16 (count data)))
+      (is (every? zero? (seq data)))
+      (syscall/close-fd fd)))
+
+  (testing "Read from /dev/urandom"
+    (let [fd (syscall/file-open "/dev/urandom" syscall/O_RDONLY)
+          data (syscall/file-read fd 32)]
+      (is (= 32 (count data)))
+      ;; Random data should have at least some non-zero bytes
+      (is (some #(not (zero? %)) (seq data)))
+      (syscall/close-fd fd))))
+
+(deftest test-file-write-to-dev-null
+  (testing "Write to /dev/null"
+    (let [fd (syscall/file-open "/dev/null" syscall/O_WRONLY)
+          written (syscall/file-write fd "This goes nowhere\n")]
+      (is (= 18 written))
+      (syscall/close-fd fd))))
+
+(deftest test-file-read-all
+  (testing "Read entire small file"
+    (let [test-file (str "/tmp/clj-ebpf-test-readall-" (System/currentTimeMillis) ".txt")
+          test-data "Line 1\nLine 2\nLine 3\n"]
+      (spit test-file test-data)
+      (try
+        (let [data (syscall/file-read-all test-file)]
+          (is (= test-data (String. data))))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Read entire larger file (multiple chunks)"
+    (let [test-file (str "/tmp/clj-ebpf-test-readall-large-" (System/currentTimeMillis) ".txt")
+          ;; Create 20KB of data (larger than 8192 chunk size)
+          test-data (apply str (repeat 1000 "This is line of text.\n"))]
+      (spit test-file test-data)
+      (try
+        (let [data (syscall/file-read-all test-file)]
+          (is (= (count test-data) (count data)))
+          (is (= test-data (String. data))))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Read /etc/hostname"
+    (let [data (syscall/file-read-all "/etc/hostname")]
+      (is (pos? (count data)))
+      (is (string? (String. data))))))
+
+(deftest test-file-write-all
+  (testing "Write entire file (creates new)"
+    (let [test-file (str "/tmp/clj-ebpf-test-writeall-" (System/currentTimeMillis) ".txt")
+          test-data "Complete file content\n"]
+      (try
+        (let [written (syscall/file-write-all test-file test-data)]
+          (is (= (count test-data) written))
+          (is (= test-data (slurp test-file))))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Write entire file (overwrites existing)"
+    (let [test-file (str "/tmp/clj-ebpf-test-writeall-overwrite-" (System/currentTimeMillis) ".txt")]
+      (spit test-file "Original content that should be replaced")
+      (try
+        (let [new-data "New content\n"
+              written (syscall/file-write-all test-file new-data)]
+          (is (= (count new-data) written))
+          (is (= new-data (slurp test-file))))
+        (finally
+          (.delete (File. test-file))))))
+
+  (testing "Write with custom mode"
+    (let [test-file (str "/tmp/clj-ebpf-test-writeall-mode-" (System/currentTimeMillis) ".txt")]
+      (try
+        (syscall/file-write-all test-file "Private data\n" 0600)
+        (is (.exists (File. test-file)))
+        (finally
+          (.delete (File. test-file)))))))
+
+(deftest test-file-read-write-binary
+  (testing "Read and write binary data"
+    (let [test-file (str "/tmp/clj-ebpf-test-binary-" (System/currentTimeMillis) ".bin")
+          ;; Binary data with all byte values 0-255
+          test-bytes (byte-array (map #(unchecked-byte %) (range 256)))]
+      (try
+        ;; Write binary
+        (let [fd (syscall/file-open test-file
+                                    (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                                    0644)]
+          (syscall/file-write fd test-bytes)
+          (syscall/close-fd fd))
+        ;; Read binary
+        (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+              data (syscall/file-read fd 512)]
+          (is (= 256 (count data)))
+          (is (= (seq test-bytes) (seq data)))
+          (syscall/close-fd fd))
+        (finally
+          (.delete (File. test-file)))))))

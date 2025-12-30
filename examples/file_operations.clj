@@ -164,14 +164,105 @@
   (println))
 
 ;; ============================================================================
-;; Section 4: Architecture Information
+;; Section 4: Reading and Writing Files
+;; ============================================================================
+
+(defn demo-read-write
+  "Demonstrate file reading and writing operations."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "Section 4: READING AND WRITING FILES")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  ;; Example 1: Basic write
+  (println "Example 1: Write String to File")
+  (println "--------------------------------")
+  (let [test-file "/tmp/clj-ebpf-demo-write.txt"
+        fd (syscall/file-open test-file
+                              (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                              0644)
+        written (syscall/file-write fd "Hello from clj-ebpf!\n")]
+    (println "  (syscall/file-write fd \"Hello from clj-ebpf!\\n\")")
+    (println "  Written:" written "bytes")
+    (syscall/close-fd fd)
+    (.delete (File. test-file))
+    (println))
+
+  ;; Example 2: Basic read
+  (println "Example 2: Read from File")
+  (println "-------------------------")
+  (let [test-file "/tmp/clj-ebpf-demo-read.txt"]
+    (spit test-file "Test content for reading.\n")
+    (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+          data (syscall/file-read fd 1024)]
+      (println "  (syscall/file-read fd 1024)")
+      (println "  Read:" (count data) "bytes")
+      (println "  Content:" (pr-str (String. data)))
+      (syscall/close-fd fd))
+    (.delete (File. test-file))
+    (println))
+
+  ;; Example 3: Read/Write roundtrip
+  (println "Example 3: Write then Read (Roundtrip)")
+  (println "--------------------------------------")
+  (let [test-file "/tmp/clj-ebpf-demo-roundtrip.txt"
+        original "Line 1\nLine 2\nLine 3\n"]
+    ;; Write
+    (let [fd (syscall/file-open test-file
+                                (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                                0644)]
+      (syscall/file-write fd original)
+      (syscall/close-fd fd))
+    ;; Read back
+    (let [fd (syscall/file-open test-file syscall/O_RDONLY)
+          data (String. (syscall/file-read fd 1024))]
+      (println "  Original:" (pr-str original))
+      (println "  Read back:" (pr-str data))
+      (println "  Match:" (= original data))
+      (syscall/close-fd fd))
+    (.delete (File. test-file))
+    (println))
+
+  ;; Example 4: Convenience functions
+  (println "Example 4: Convenience Functions")
+  (println "--------------------------------")
+  (let [test-file "/tmp/clj-ebpf-demo-convenience.txt"]
+    (println "  file-write-all - Write entire file:")
+    (println "    (syscall/file-write-all path \"content\")")
+    (syscall/file-write-all test-file "Convenience function test!\n")
+    (println "    Written successfully")
+    (println)
+    (println "  file-read-all - Read entire file:")
+    (println "    (syscall/file-read-all path)")
+    (let [content (String. (syscall/file-read-all test-file))]
+      (println "    Content:" (pr-str content)))
+    (.delete (File. test-file))
+    (println))
+
+  ;; Example 5: Read from special files
+  (println "Example 5: Reading Special Files")
+  (println "--------------------------------")
+  (let [fd (syscall/file-open "/dev/zero" syscall/O_RDONLY)
+        data (syscall/file-read fd 8)]
+    (println "  /dev/zero: returns all zeros")
+    (println "  Read 8 bytes:" (vec data))
+    (syscall/close-fd fd))
+  (let [fd (syscall/file-open "/dev/urandom" syscall/O_RDONLY)
+        data (syscall/file-read fd 8)]
+    (println "  /dev/urandom: returns random bytes")
+    (println "  Read 8 bytes:" (vec data))
+    (syscall/close-fd fd))
+  (println))
+
+;; ============================================================================
+;; Section 5: Architecture Information
 ;; ============================================================================
 
 (defn demo-architecture
   "Show architecture-specific syscall information."
   []
   (println "\n" (apply str (repeat 70 "=")) "\n")
-  (println "Section 4: ARCHITECTURE INFORMATION")
+  (println "Section 5: ARCHITECTURE INFORMATION")
   (println (apply str (repeat 70 "=")) "\n")
 
   (println "Current Architecture:" arch/arch-name)
@@ -197,14 +288,14 @@
   (println "  When opening 'foo.txt', it's equivalent to './foo.txt'\n"))
 
 ;; ============================================================================
-;; Section 5: Error Handling
+;; Section 6: Error Handling
 ;; ============================================================================
 
 (defn demo-error-handling
   "Demonstrate error handling for file operations."
   []
   (println "\n" (apply str (repeat 70 "=")) "\n")
-  (println "Section 5: ERROR HANDLING")
+  (println "Section 6: ERROR HANDLING")
   (println (apply str (repeat 70 "=")) "\n")
 
   (println "Example 1: File Not Found (ENOENT)")
@@ -252,14 +343,14 @@
     (.delete (File. test-file))))
 
 ;; ============================================================================
-;; Section 6: Practical Use Cases
+;; Section 7: Practical Use Cases
 ;; ============================================================================
 
 (defn demo-use-cases
-  "Demonstrate practical use cases for file-open."
+  "Demonstrate practical use cases for file operations."
   []
   (println "\n" (apply str (repeat 70 "=")) "\n")
-  (println "Section 6: PRACTICAL USE CASES")
+  (println "Section 7: PRACTICAL USE CASES")
   (println (apply str (repeat 70 "=")) "\n")
 
   (println "Use Case 1: Lock File Pattern")
@@ -323,13 +414,14 @@
   (println "╔══════════════════════════════════════════════════════════════════════╗")
   (println "║               clj-ebpf File Operations Example                       ║")
   (println "║                                                                      ║")
-  (println "║  Demonstrates the file-open function using openat syscall           ║")
+  (println "║  Demonstrates file operations using openat/read/write syscalls      ║")
   (println "║  via Java Panama FFI for low-level file access.                     ║")
   (println "╚══════════════════════════════════════════════════════════════════════╝")
 
   (demo-basic-open)
   (demo-create-file)
   (demo-flags)
+  (demo-read-write)
   (demo-architecture)
   (demo-error-handling)
   (demo-use-cases)

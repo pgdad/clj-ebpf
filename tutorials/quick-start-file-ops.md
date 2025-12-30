@@ -1,13 +1,14 @@
-# Quick Start: File Operations with openat Syscall
+# Quick Start: File Operations with Syscalls
 
-**Duration**: 15-20 minutes | **Difficulty**: Beginner
+**Duration**: 20-25 minutes | **Difficulty**: Beginner
 
 ## Learning Objectives
 
 By the end of this tutorial, you will:
 - Understand how clj-ebpf provides low-level file access via syscalls
 - Know the available open flags and when to use them
-- Be able to open, create, and manage files using `file-open`
+- Be able to open, create, read, and write files using syscalls
+- Use convenience functions for common file operations
 - Handle errors properly when working with file operations
 - Understand the cross-architecture support for file operations
 
@@ -305,7 +306,117 @@ Use `O_APPEND` for concurrent-safe logging:
 
 ---
 
-## Part 6: Cross-Architecture Support
+## Part 6: Reading and Writing Files
+
+### Low-Level Read/Write Functions
+
+Once you have a file descriptor from `file-open`, use `file-read` and `file-write`:
+
+```clojure
+;; Read up to 1024 bytes from a file descriptor
+(let [fd (syscall/file-open "/etc/hostname" syscall/O_RDONLY)]
+  (try
+    (let [data (syscall/file-read fd 1024)]
+      (println "Read" (count data) "bytes:" (String. data)))
+    (finally
+      (syscall/close-fd fd))))
+
+;; Write data to a file descriptor
+(let [fd (syscall/file-open "/tmp/output.txt"
+                            (bit-or syscall/O_CREAT syscall/O_WRONLY syscall/O_TRUNC)
+                            0644)]
+  (try
+    (let [bytes-written (syscall/file-write fd (.getBytes "Hello, World!\n"))]
+      (println "Wrote" bytes-written "bytes"))
+    (finally
+      (syscall/close-fd fd))))
+```
+
+### Function Signatures
+
+```clojure
+(file-read fd size)    ;; Read up to size bytes, returns byte array
+(file-write fd data)   ;; Write byte array, returns bytes written
+```
+
+| Function | Parameters | Returns |
+|----------|-----------|---------|
+| `file-read` | `fd` (int), `size` (int) | byte array with data read |
+| `file-write` | `fd` (int), `data` (byte[]) | number of bytes written |
+
+### Convenience Functions
+
+For common use cases, clj-ebpf provides high-level functions:
+
+```clojure
+;; Read entire file contents as byte array
+(let [content (syscall/file-read-all "/etc/hostname")]
+  (println "File contents:" (String. content)))
+
+;; Write data to file (creates or truncates)
+(syscall/file-write-all "/tmp/test.txt" (.getBytes "Hello!\n"))
+
+;; Read and display text file
+(println (String. (syscall/file-read-all "/etc/os-release")))
+```
+
+### Reading Special Files
+
+The read functions work with special Linux files:
+
+```clojure
+;; Read from /dev/zero (always returns zeros)
+(let [zeros (syscall/file-read-all "/dev/zero" 16)]
+  (println "Zeros:" (vec zeros)))
+;; => Zeros: [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+
+;; Read random bytes from /dev/urandom
+(let [random-bytes (syscall/file-read-all "/dev/urandom" 8)]
+  (println "Random:" (vec random-bytes)))
+;; => Random: [42 187 23 ...] (random values)
+```
+
+### Binary Data Example
+
+Read and write binary data:
+
+```clojure
+;; Write binary data
+(let [binary-data (byte-array [0x89 0x50 0x4E 0x47  ;; PNG header
+                               0x0D 0x0A 0x1A 0x0A])]
+  (syscall/file-write-all "/tmp/header.bin" binary-data))
+
+;; Read binary data
+(let [header (syscall/file-read-all "/tmp/header.bin")]
+  (println "Header bytes:" (mapv #(format "0x%02X" (bit-and % 0xFF)) header)))
+;; => Header bytes: ["0x89" "0x50" "0x4E" "0x47" "0x0D" "0x0A" "0x1A" "0x0A"]
+```
+
+### Error Handling for Read/Write
+
+```clojure
+;; file-read throws on error
+(try
+  (syscall/file-read -1 100)  ;; Invalid fd
+  (catch clojure.lang.ExceptionInfo e
+    (println "Read error:" (:error (ex-data e)))))
+;; => Read error: :ebadf
+
+;; file-write throws on error
+(try
+  (let [fd (syscall/file-open "/etc/passwd" syscall/O_RDONLY)]
+    (try
+      (syscall/file-write fd (.getBytes "test"))  ;; Can't write to read-only
+      (finally
+        (syscall/close-fd fd))))
+  (catch clojure.lang.ExceptionInfo e
+    (println "Write error:" (:error (ex-data e)))))
+;; => Write error: :ebadf
+```
+
+---
+
+## Part 7: Cross-Architecture Support
 
 ### Syscall Numbers
 
@@ -348,6 +459,10 @@ The `AT_FDCWD` constant (-100) tells `openat` to interpret relative paths from t
 | Function | Purpose |
 |----------|---------|
 | `file-open` | Open/create files using openat syscall |
+| `file-read` | Read bytes from a file descriptor |
+| `file-write` | Write bytes to a file descriptor |
+| `file-read-all` | Read entire file contents |
+| `file-write-all` | Write data to file (create/truncate) |
 | `close-fd` | Close a file descriptor |
 
 ### Key Constants

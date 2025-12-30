@@ -1343,6 +1343,141 @@
        (finally
          (.close arena))))))
 
+(defn file-read
+  "Read from a file descriptor using the read syscall.
+
+   Arguments:
+   - fd: File descriptor (from file-open)
+   - size: Maximum number of bytes to read
+
+   Returns a byte array containing the data read, or empty array on EOF.
+   Throws on error.
+
+   Examples:
+     (let [fd (file-open \"/etc/passwd\" O_RDONLY)]
+       (try
+         (let [data (file-read fd 1024)]
+           (println (String. data)))
+         (finally
+           (close-fd fd))))"
+  [fd size]
+  (let [arena (Arena/ofConfined)
+        read-nr (arch/get-syscall-nr :read)]
+    (try
+      (let [buf-seg (.allocate arena (long size))
+            result (raw-syscall read-nr fd buf-seg size)]
+        (if (neg? result)
+          (let [errno (get-errno)]
+            (throw (ex-info (str "Failed to read from fd: " fd)
+                            {:fd fd
+                             :size size
+                             :errno errno
+                             :error (errno->keyword errno)})))
+          ;; Return the bytes that were actually read
+          (let [bytes-read (int result)
+                result-bytes (byte-array bytes-read)]
+            (when (pos? bytes-read)
+              (dotimes [i bytes-read]
+                (aset result-bytes i
+                      (.get buf-seg ValueLayout/JAVA_BYTE (long i)))))
+            result-bytes)))
+      (finally
+        (.close arena)))))
+
+(defn file-write
+  "Write to a file descriptor using the write syscall.
+
+   Arguments:
+   - fd: File descriptor (from file-open)
+   - data: Byte array or string to write
+
+   Returns the number of bytes written.
+   Throws on error.
+
+   Examples:
+     (let [fd (file-open \"/tmp/test.txt\" (bit-or O_CREAT O_WRONLY) 0644)]
+       (try
+         (file-write fd \"Hello, World!\\n\")
+         (finally
+           (close-fd fd))))"
+  [fd data]
+  (let [arena (Arena/ofConfined)
+        write-nr (arch/get-syscall-nr :write)
+        bytes (if (string? data)
+                (.getBytes ^String data "UTF-8")
+                data)
+        size (count bytes)]
+    (try
+      (let [buf-seg (.allocate arena (long size))]
+        ;; Copy bytes to native memory
+        (dotimes [i size]
+          (.set buf-seg ValueLayout/JAVA_BYTE (long i) (aget ^bytes bytes i)))
+        (let [result (raw-syscall write-nr fd buf-seg size)]
+          (if (neg? result)
+            (let [errno (get-errno)]
+              (throw (ex-info (str "Failed to write to fd: " fd)
+                              {:fd fd
+                               :size size
+                               :errno errno
+                               :error (errno->keyword errno)})))
+            (int result))))
+      (finally
+        (.close arena)))))
+
+(defn file-read-all
+  "Read entire contents of a file.
+
+   Arguments:
+   - path: File path (string)
+
+   Returns byte array with file contents.
+   Throws on error.
+
+   Example:
+     (String. (file-read-all \"/etc/hostname\"))"
+  [path]
+  (let [fd (file-open path O_RDONLY)]
+    (try
+      (loop [chunks []]
+        (let [chunk (file-read fd 8192)]
+          (if (zero? (count chunk))
+            ;; EOF - concatenate all chunks
+            (let [total-size (reduce + (map count chunks))
+                  result (byte-array total-size)]
+              (loop [chunks chunks
+                     offset 0]
+                (when (seq chunks)
+                  (let [chunk (first chunks)
+                        len (count chunk)]
+                    (System/arraycopy chunk 0 result offset len)
+                    (recur (rest chunks) (+ offset len)))))
+              result)
+            (recur (conj chunks chunk)))))
+      (finally
+        (close-fd fd)))))
+
+(defn file-write-all
+  "Write data to a file, creating or truncating it.
+
+   Arguments:
+   - path: File path (string)
+   - data: Byte array or string to write
+   - mode: File permissions (default 0644)
+
+   Returns number of bytes written.
+   Throws on error.
+
+   Example:
+     (file-write-all \"/tmp/hello.txt\" \"Hello, World!\\n\")"
+  ([path data]
+   (file-write-all path data 0644))
+  ([path data mode]
+   (let [fd (file-open path (bit-or O_CREAT O_WRONLY O_TRUNC) mode)]
+     (try
+       (file-write fd data)
+       (finally
+         (close-fd fd))))))
+
 ;; ============================================================================
 ;; BPF_PROG_TEST_RUN Support
 ;; ============================================================================
