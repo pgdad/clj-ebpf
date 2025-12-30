@@ -500,3 +500,90 @@
                                  (dsl/lsh :r0 4)
                                  (dsl/exit-insn)])]
       (is (= 32 (count bitwise))))))
+
+;; ============================================================================
+;; Network Byte Order Conversion Tests
+;; ============================================================================
+
+(deftest test-htons-instruction
+  (testing "htons generates valid BPF instruction"
+    (let [insn (dsl/htons :r7)]
+      (is (= 8 (count insn)))
+      ;; Check opcode: ALU | END (0xd4)
+      (is (= (unchecked-byte 0xd4) (aget insn 0)))))
+
+  (testing "htons is same as end-to-be 16"
+    (is (java.util.Arrays/equals
+         ^bytes (dsl/htons :r0)
+         ^bytes (dsl/end-to-be :r0 16)))))
+
+(deftest test-htonl-instruction
+  (testing "htonl generates valid BPF instruction"
+    (let [insn (dsl/htonl :r5)]
+      (is (= 8 (count insn)))
+      (is (= (unchecked-byte 0xd4) (aget insn 0)))))
+
+  (testing "htonl is same as end-to-be 32"
+    (is (java.util.Arrays/equals
+         ^bytes (dsl/htonl :r1)
+         ^bytes (dsl/end-to-be :r1 32)))))
+
+(deftest test-ntohs-instruction
+  (testing "ntohs generates valid BPF instruction"
+    (let [insn (dsl/ntohs :r2)]
+      (is (= 8 (count insn)))))
+
+  (testing "ntohs is same as htons (symmetric)"
+    (is (java.util.Arrays/equals
+         ^bytes (dsl/ntohs :r3)
+         ^bytes (dsl/htons :r3)))))
+
+(deftest test-ntohl-instruction
+  (testing "ntohl generates valid BPF instruction"
+    (let [insn (dsl/ntohl :r4)]
+      (is (= 8 (count insn)))))
+
+  (testing "ntohl is same as htonl (symmetric)"
+    (is (java.util.Arrays/equals
+         ^bytes (dsl/ntohl :r6)
+         ^bytes (dsl/htonl :r6)))))
+
+;; ============================================================================
+;; Network Byte Order Value Conversion Tests
+;; ============================================================================
+
+(deftest test-htons-val
+  (testing "htons-val converts port numbers correctly"
+    ;; Port 80: 0x0050 in host order -> 0x5000 in network order
+    (is (= 0x5000 (dsl/htons-val 0x0050)))
+    (is (= 0x5000 (dsl/htons-val 80)))
+
+    ;; Port 8080: 0x1F90 in host order -> 0x901F in network order
+    (is (= 0x901F (dsl/htons-val 0x1F90)))
+    (is (= 0x901F (dsl/htons-val 8080)))
+
+    ;; Port 443: 0x01BB in host order -> 0xBB01 in network order
+    (is (= 0xBB01 (dsl/htons-val 443)))))
+
+(deftest test-ntohs-val
+  (testing "ntohs-val is symmetric with htons-val"
+    (is (= 80 (dsl/ntohs-val (dsl/htons-val 80))))
+    (is (= 8080 (dsl/ntohs-val (dsl/htons-val 8080))))
+    (is (= 443 (dsl/ntohs-val (dsl/htons-val 443))))))
+
+(deftest test-htonl-val
+  (testing "htonl-val converts IPv4 addresses correctly"
+    ;; 127.0.0.1 = 0x7F000001 -> 0x0100007F in network order
+    (is (= 0x0100007F (dsl/htonl-val 0x7F000001)))
+
+    ;; 192.168.1.1 = 0xC0A80101 -> 0x0101A8C0 in network order
+    (is (= 0x0101A8C0 (dsl/htonl-val 0xC0A80101)))
+
+    ;; 10.0.0.1 = 0x0A000001 -> 0x0100000A in network order
+    (is (= 0x0100000A (dsl/htonl-val 0x0A000001)))))
+
+(deftest test-ntohl-val
+  (testing "ntohl-val is symmetric with htonl-val"
+    (is (= 0x7F000001 (dsl/ntohl-val (dsl/htonl-val 0x7F000001))))
+    (is (= 0xC0A80101 (dsl/ntohl-val (dsl/htonl-val 0xC0A80101))))
+    (is (= 0x0A000001 (dsl/ntohl-val (dsl/htonl-val 0x0A000001))))))

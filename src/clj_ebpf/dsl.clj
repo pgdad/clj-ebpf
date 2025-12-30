@@ -752,6 +752,144 @@
     (build-instruction opcode (resolve-register dst) 0 0 size)))
 
 ;; ============================================================================
+;; Network Byte Order Conversion (BPF Instructions)
+;; ============================================================================
+;;
+;; These generate BPF byte-swap instructions using familiar networking names.
+;; On little-endian systems (x86), htons/ntohs are the same operation.
+
+(defn htons
+  "Host to Network Short - convert 16-bit register to network byte order.
+
+   Generates a BPF byte-swap instruction for 16-bit values.
+   Use when preparing port numbers or other 16-bit values for network transmission.
+
+   Parameters:
+   - reg: Register to convert in-place
+
+   Example:
+     (htons :r7)  ; r7 = htons(r7) - swap bytes for network order
+
+   Note: On little-endian (x86), this swaps bytes.
+   On big-endian, this would be a no-op (but BPF always swaps)."
+  [reg]
+  (end-to-be reg 16))
+
+(defn htonl
+  "Host to Network Long - convert 32-bit register to network byte order.
+
+   Generates a BPF byte-swap instruction for 32-bit values.
+   Use when preparing IPv4 addresses or other 32-bit values for network transmission.
+
+   Parameters:
+   - reg: Register to convert in-place
+
+   Example:
+     (htonl :r7)  ; r7 = htonl(r7) - swap bytes for network order"
+  [reg]
+  (end-to-be reg 32))
+
+(defn ntohs
+  "Network to Host Short - convert 16-bit register from network byte order.
+
+   Generates a BPF byte-swap instruction for 16-bit values.
+   Use when reading port numbers from network packets.
+
+   Parameters:
+   - reg: Register to convert in-place
+
+   Example:
+     (ntohs :r7)  ; r7 = ntohs(r7) - swap bytes to host order
+
+   Note: This is the same operation as htons (byte swap is symmetric)."
+  [reg]
+  (end-to-be reg 16))
+
+(defn ntohl
+  "Network to Host Long - convert 32-bit register from network byte order.
+
+   Generates a BPF byte-swap instruction for 32-bit values.
+   Use when reading IPv4 addresses from network packets.
+
+   Parameters:
+   - reg: Register to convert in-place
+
+   Example:
+     (ntohl :r7)  ; r7 = ntohl(r7) - swap bytes to host order
+
+   Note: This is the same operation as htonl (byte swap is symmetric)."
+  [reg]
+  (end-to-be reg 32))
+
+;; ============================================================================
+;; Network Byte Order Conversion (Clojure Values)
+;; ============================================================================
+;;
+;; These convert actual Clojure integer values between byte orders.
+;; Use for preparing immediate values or comparing against packet data.
+
+(defn htons-val
+  "Convert 16-bit Clojure value from host to network byte order.
+
+   Use when you need to compare against a port number read from a packet,
+   or when embedding a port value in BPF instructions.
+
+   Parameters:
+   - value: 16-bit integer
+
+   Returns: Value in network byte order (big-endian)
+
+   Example:
+     (htons-val 80)    ; => 0x5000 (port 80 in network order)
+     (htons-val 8080)  ; => 0x901F (port 8080 in network order)"
+  [value]
+  (bit-or (bit-shift-left (bit-and value 0xFF) 8)
+          (bit-and (bit-shift-right value 8) 0xFF)))
+
+(defn ntohs-val
+  "Convert 16-bit Clojure value from network to host byte order.
+
+   Parameters:
+   - value: 16-bit integer in network byte order
+
+   Returns: Value in host byte order
+
+   Note: Same operation as htons-val (symmetric)."
+  [value]
+  (htons-val value))
+
+(defn htonl-val
+  "Convert 32-bit Clojure value from host to network byte order.
+
+   Use when you need to compare against an IPv4 address read from a packet.
+
+   Parameters:
+   - value: 32-bit integer
+
+   Returns: Value in network byte order (big-endian)
+
+   Example:
+     (htonl-val 0x7F000001)  ; 127.0.0.1 => 0x0100007F in network order
+     (htonl-val 0xC0A80101)  ; 192.168.1.1 => 0x0101A8C0 in network order"
+  [value]
+  (bit-or (bit-shift-left (bit-and value 0xFF) 24)
+          (bit-shift-left (bit-and (bit-shift-right value 8) 0xFF) 16)
+          (bit-shift-left (bit-and (bit-shift-right value 16) 0xFF) 8)
+          (bit-and (bit-shift-right value 24) 0xFF)))
+
+(defn ntohl-val
+  "Convert 32-bit Clojure value from network to host byte order.
+
+   Parameters:
+   - value: 32-bit integer in network byte order
+
+   Returns: Value in host byte order
+
+   Note: Same operation as htonl-val (symmetric)."
+  [value]
+  (htonl-val value))
+
+;; ============================================================================
 ;; Jump Instructions
 ;; ============================================================================
 
