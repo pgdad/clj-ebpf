@@ -1199,7 +1199,11 @@
                                            (into-array java.lang.foreign.Linker$Option []))
          :syscall-4ptr-args (.downcallHandle linker mem-seg
                                             (make-function-descriptor C_LONG C_LONG C_LONG C_LONG C_LONG C_POINTER)
-                                            (into-array java.lang.foreign.Linker$Option []))}))))
+                                            (into-array java.lang.foreign.Linker$Option []))
+         ;; For openat: syscall(nr, dirfd, pathname, flags, mode)
+         :syscall-openat (.downcallHandle linker mem-seg
+                                          (make-function-descriptor C_LONG C_LONG C_LONG C_POINTER C_LONG C_LONG)
+                                          (into-array java.lang.foreign.Linker$Option []))}))))
 
 (defn raw-syscall
   "Make a raw syscall with variable arguments.
@@ -1257,10 +1261,10 @@
         (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
                              [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
 
-        ;; 4 arguments with pointer at position 1 (e.g., sendto, recvfrom)
+        ;; 4 arguments with pointer at position 1 (e.g., openat: dirfd, pathname, flags, mode)
         (and (= arg-count 4) (instance? MemorySegment (nth args 1)))
-        (.invokeWithArguments (:syscall-ptr-args raw-syscall-fn)
-                             [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2))])
+        (.invokeWithArguments (:syscall-openat raw-syscall-fn)
+                             [(long nr) (long (nth args 0)) (nth args 1) (long (nth args 2)) (long (nth args 3))])
 
         ;; 4 arguments with pointer at position 3 (e.g., epoll_ctl, epoll_wait)
         (and (= arg-count 4) (instance? MemorySegment (nth args 3)))
@@ -1283,6 +1287,61 @@
         (f))
       (finally
         (.close arena)))))
+
+;; ============================================================================
+;; File Operations (openat)
+;; ============================================================================
+
+;; AT_FDCWD: Use current working directory for relative paths
+(def ^:const AT_FDCWD -100)
+
+;; Common open flags (from fcntl.h)
+(def ^:const O_RDONLY    0x0000)
+(def ^:const O_WRONLY    0x0001)
+(def ^:const O_RDWR      0x0002)
+(def ^:const O_CREAT     0x0040)
+(def ^:const O_EXCL      0x0080)
+(def ^:const O_TRUNC     0x0200)
+(def ^:const O_APPEND    0x0400)
+(def ^:const O_NONBLOCK  0x0800)
+(def ^:const O_CLOEXEC   0x80000)
+
+(defn file-open
+  "Open a file using the openat syscall.
+
+   Arguments:
+   - path: File path (string)
+   - flags: Open flags (e.g., O_RDONLY, O_RDWR, O_CREAT | O_WRONLY)
+   - mode: File mode for creation (default 0644, only used with O_CREAT)
+
+   Returns file descriptor on success, throws on error.
+
+   Examples:
+     (file-open \"/tmp/test.txt\" O_RDONLY)
+     (file-open \"/tmp/new.txt\" (bit-or O_CREAT O_WRONLY) 0644)"
+  ([path flags]
+   (file-open path flags 0644))
+  ([path flags mode]
+   (let [arena (Arena/ofConfined)
+         openat-nr (arch/get-syscall-nr :openat)]
+     (try
+       (let [path-seg (.allocateFrom arena ^String path)
+             result (raw-syscall openat-nr
+                                 AT_FDCWD
+                                 path-seg
+                                 flags
+                                 mode)]
+         (if (neg? result)
+           (let [errno (get-errno)]
+             (throw (ex-info (str "Failed to open file: " path)
+                             {:path path
+                              :flags flags
+                              :mode mode
+                              :errno errno
+                              :error (errno->keyword errno)})))
+           result))
+       (finally
+         (.close arena))))))
 
 ;; ============================================================================
 ;; BPF_PROG_TEST_RUN Support

@@ -62,6 +62,7 @@
     :read            0
     :write           1
     :ioctl           16
+    :openat          257
     :epoll-create1   291
     :epoll-ctl       233
     :epoll-wait      232
@@ -80,6 +81,7 @@
     :read            63
     :write           64
     :ioctl           29
+    :openat          56
     :epoll-create1   20
     :epoll-ctl       21
     :epoll-wait      -1   ; Not available on arm64, use epoll_pwait
@@ -98,6 +100,7 @@
     :read            3
     :write           4
     :ioctl           54
+    :openat          288
     :epoll-create1   327
     :epoll-ctl       250
     :epoll-wait      251
@@ -116,6 +119,7 @@
     :read            3
     :write           4
     :ioctl           54
+    :openat          286
     :epoll-create1   315
     :epoll-ctl       237
     :epoll-wait      238
@@ -134,6 +138,7 @@
     :read            63
     :write           64
     :ioctl           29
+    :openat          56
     :epoll-create1   20
     :epoll-ctl       21
     :epoll-wait      -1   ; Not available on riscv64, use epoll_pwait
@@ -167,6 +172,7 @@
 (def ^:const SOCKET_SYSCALL_NR (delay (get-syscall-nr :socket)))
 (def ^:const CLOSE_SYSCALL_NR (delay (get-syscall-nr :close)))
 (def ^:const IOCTL_SYSCALL_NR (delay (get-syscall-nr :ioctl)))
+(def ^:const OPENAT_SYSCALL_NR (delay (get-syscall-nr :openat)))
 (def ^:const EPOLL_CREATE1_SYSCALL_NR (delay (get-syscall-nr :epoll-create1)))
 (def ^:const EPOLL_CTL_SYSCALL_NR (delay (get-syscall-nr :epoll-ctl)))
 (def ^:const EPOLL_PWAIT_SYSCALL_NR (delay (get-syscall-nr :epoll-pwait)))
