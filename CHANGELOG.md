@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Changed
+- Updated dependencies to latest versions:
+  - org.clojure/clojure: 1.12.0 → 1.12.4
+  - io.github.clojure/tools.build: 0.10.5 → 0.10.7
+  - nrepl/nrepl: 1.1.1 → 1.5.1
+  - cider/cider-nrepl: 0.47.1 → 0.58.0
 
 ## [0.7.8] - 2025-12-29
 
