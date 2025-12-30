@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Added
+- **BPF Helper Function ID Constants** (`clj-ebpf.dsl`, `clj-ebpf.constants`):
+  - All 209 BPF helper function IDs (IDs 1-191, 194-211; 192-193 reserved)
+  - Complete mapping in `bpf-helpers` map for instruction generation
+  - Complete mapping in `helper-func` constant for reference
+  - Includes latest kernel 6.x helpers (timer, cgroup storage, ktime_get_tai_ns, etc.)
+- **BPF Context Structure Offsets** (`clj-ebpf.ctx`):
+  - `bpf-sock-ops` - 30+ field offsets for SOCK_OPS programs
+  - `bpf-sock` - 12+ field offsets for socket programs
+  - Re-exports of `sk-buff`, `xdp-md`, `sk-msg`, `bpf-sk-lookup` from other namespaces
+  - Protocol header offsets (Ethernet, IPv4, IPv6, TCP, UDP)
+  - Header size constants
+  - Address family, socket type, IP protocol constants
+  - Byte order documentation (HOST vs NETWORK) for each field
+  - Helper functions: `sock-ops-offset`, `sock-offset`
+- **Network Byte Order Conversion** (`clj-ebpf.dsl`):
+  - BPF instruction aliases: `htons`, `htonl`, `ntohs`, `ntohl`
+  - Clojure value conversion: `htons-val`, `ntohs-val`, `htonl-val`, `ntohl-val`
+- **Socket Key Building Helpers** (`clj-ebpf.maps.helpers`):
+  - `build-sock-key` - Build 4-tuple IPv4 socket key from context (16 bytes)
+  - `build-sock-key-ipv6` - Build IPv6 socket key from context (40 bytes)
+  - Support for :sock-ops, :sk-msg, :sk-skb, :tc context types
+  - `context-key-offsets` map for custom key building
+- New CI-safe test namespaces: `ctx-test`, `maps-helpers-test`
 
 ## [0.8.2] - 2025-12-30
 

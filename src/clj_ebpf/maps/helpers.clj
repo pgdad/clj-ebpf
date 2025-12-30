@@ -280,3 +280,153 @@
   [(dsl/ld-map-fd :r1 map-fd)
    (dsl/mov-reg :r2 key-ptr-reg)
    (dsl/call BPF-FUNC-map-delete-elem)])
+
+;; ============================================================================
+;; Socket Key Building Helpers
+;; ============================================================================
+;;
+;; These helpers generate instruction sequences to extract 4-tuple or 5-tuple
+;; socket keys from BPF context structures (bpf_sock_ops, sk_msg_md, etc.)
+;; and store them on the stack for use with sockmap/sockhash lookups.
+
+;; Context structure offsets for socket-related fields
+;; These match the offsets defined in clj-ebpf.ctx
+
+(def ^:private sock-ops-key-offsets
+  "bpf_sock_ops field offsets for 4-tuple key extraction."
+  {:remote-ip4   24   ; Network byte order
+   :local-ip4    28   ; Network byte order
+   :remote-port  64   ; Network byte order
+   :local-port   68}) ; Host byte order (!)
+
+(def ^:private sk-msg-key-offsets
+  "sk_msg_md field offsets for 4-tuple key extraction."
+  {:remote-ip4   20   ; Network byte order
+   :local-ip4    24   ; Network byte order
+   :remote-port  60   ; Network byte order
+   :local-port   64}) ; Host byte order (!)
+
+(def ^:private sk-buff-key-offsets
+  "__sk_buff field offsets for 4-tuple key extraction."
+  {:remote-ip4  124   ; Network byte order
+   :local-ip4   128   ; Network byte order
+   :remote-port 132   ; Network byte order
+   :local-port  136}) ; Host byte order (!)
+
+(def context-key-offsets
+  "Map of context types to their 4-tuple field offsets.
+
+   Supported context types:
+   - :sock-ops   - For BPF_PROG_TYPE_SOCK_OPS programs (bpf_sock_ops)
+   - :sk-msg     - For BPF_PROG_TYPE_SK_MSG programs (sk_msg_md)
+   - :sk-skb     - For BPF_PROG_TYPE_SK_SKB programs (__sk_buff)
+   - :tc         - For TC programs (__sk_buff, same as sk-skb)"
+  {:sock-ops sock-ops-key-offsets
+   :sk-msg   sk-msg-key-offsets
+   :sk-skb   sk-buff-key-offsets
+   :tc       sk-buff-key-offsets})
+
+(defn build-sock-key
+  "Generate instructions to build a 4-tuple socket key from context.
+
+   Extracts remote_ip, local_ip, remote_port, local_port from the BPF context
+   and stores them contiguously on the stack for use with sockmap/sockhash.
+
+   The resulting 16-byte key structure on stack:
+     offset+0:  remote_ip4  (4 bytes)
+     offset+4:  local_ip4   (4 bytes)
+     offset+8:  remote_port (4 bytes, stored as u32)
+     offset+12: local_port  (4 bytes, stored as u32)
+
+   Parameters:
+     ctx-reg: Register containing pointer to BPF context
+     key-stack-off: Stack offset where key will be stored (negative, e.g., -16)
+     ctx-type: Context type keyword:
+               - :sock-ops for bpf_sock_ops (SOCK_OPS programs)
+               - :sk-msg for sk_msg_md (SK_MSG programs)
+               - :sk-skb or :tc for __sk_buff (SK_SKB/TC programs)
+
+   Clobbers: r0
+
+   Note: remote_port is network byte order, local_port is host byte order.
+   The key is stored as-is without byte order conversion. If your sockmap
+   key format expects a specific byte order, perform conversion after building.
+
+   Example:
+     ;; In a SOCK_OPS program, build key at fp-16
+     (concat
+       (build-sock-key :r6 -16 :sock-ops)
+       ;; Key is now at stack[-16], can use for sockmap lookup
+       (build-map-lookup sockmap-fd -16))"
+  [ctx-reg key-stack-off ctx-type]
+  (let [offsets (or (get context-key-offsets ctx-type)
+                    (throw (ex-info "Unknown context type for sock key"
+                                    {:ctx-type ctx-type
+                                     :supported (keys context-key-offsets)})))]
+    [(dsl/ldx :w :r0 ctx-reg (:remote-ip4 offsets))
+     (dsl/stx :w :r10 :r0 key-stack-off)
+     (dsl/ldx :w :r0 ctx-reg (:local-ip4 offsets))
+     (dsl/stx :w :r10 :r0 (+ key-stack-off 4))
+     (dsl/ldx :w :r0 ctx-reg (:remote-port offsets))
+     (dsl/stx :w :r10 :r0 (+ key-stack-off 8))
+     (dsl/ldx :w :r0 ctx-reg (:local-port offsets))
+     (dsl/stx :w :r10 :r0 (+ key-stack-off 12))]))
+
+(defn build-sock-key-ipv6
+  "Generate instructions to build a 6-tuple IPv6 socket key from context.
+
+   Extracts remote_ip6 (16 bytes), local_ip6 (16 bytes), remote_port, local_port
+   from the BPF context for IPv6 connections.
+
+   The resulting 40-byte key structure on stack:
+     offset+0:  remote_ip6  (16 bytes)
+     offset+16: local_ip6   (16 bytes)
+     offset+32: remote_port (4 bytes)
+     offset+36: local_port  (4 bytes)
+
+   Parameters:
+     ctx-reg: Register containing pointer to BPF context
+     key-stack-off: Stack offset where key will be stored (negative, e.g., -48)
+     ctx-type: Context type (:sock-ops only currently)
+
+   Clobbers: r0
+
+   Note: Only :sock-ops context is supported for IPv6 key building.
+
+   Example:
+     (concat
+       (build-sock-key-ipv6 :r6 -48 :sock-ops)
+       (build-map-lookup sockmap6-fd -48))"
+  [ctx-reg key-stack-off ctx-type]
+  (when (not= ctx-type :sock-ops)
+    (throw (ex-info "IPv6 sock key only supported for :sock-ops context"
+                    {:ctx-type ctx-type})))
+  ;; bpf_sock_ops IPv6 offsets
+  (let [remote-ip6-off 32   ; 16 bytes
+        local-ip6-off  48   ; 16 bytes
+        remote-port-off 64
+        local-port-off 68]
+    ;; Copy 16 bytes of remote_ip6 (4 loads of 4 bytes each)
+    (concat
+      [(dsl/ldx :w :r0 ctx-reg remote-ip6-off)
+       (dsl/stx :w :r10 :r0 key-stack-off)
+       (dsl/ldx :w :r0 ctx-reg (+ remote-ip6-off 4))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 4))
+       (dsl/ldx :w :r0 ctx-reg (+ remote-ip6-off 8))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 8))
+       (dsl/ldx :w :r0 ctx-reg (+ remote-ip6-off 12))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 12))]
+      ;; Copy 16 bytes of local_ip6
+      [(dsl/ldx :w :r0 ctx-reg local-ip6-off)
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 16))
+       (dsl/ldx :w :r0 ctx-reg (+ local-ip6-off 4))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 20))
+       (dsl/ldx :w :r0 ctx-reg (+ local-ip6-off 8))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 24))
+       (dsl/ldx :w :r0 ctx-reg (+ local-ip6-off 12))
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 28))]
+      ;; Copy ports
+      [(dsl/ldx :w :r0 ctx-reg remote-port-off)
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 32))
+       (dsl/ldx :w :r0 ctx-reg local-port-off)
+       (dsl/stx :w :r10 :r0 (+ key-stack-off 36))])))
