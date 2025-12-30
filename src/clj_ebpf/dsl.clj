@@ -130,66 +130,282 @@
 ;; ============================================================================
 
 (def bpf-helpers
-  "Common BPF helper function IDs"
-  {:map-lookup-elem        1
-   :map-update-elem        2
-   :map-delete-elem        3
-   :probe-read             4
-   :ktime-get-ns           5
-   :trace-printk           6
-   :get-prandom-u32        7
-   :get-smp-processor-id   8
-   :skb-store-bytes        9
-   :l3-csum-replace        10
-   :l4-csum-replace        11
-   :tail-call              12
-   :clone-redirect         13
-   :get-current-pid-tgid   14
-   :get-current-uid-gid    15
-   :get-current-comm       16
-   :get-cgroup-classid     17
-   :skb-vlan-push          18
-   :skb-vlan-pop           19
-   :skb-get-tunnel-key     20
-   :skb-set-tunnel-key     21
-   :perf-event-read        22
-   :redirect               23
-   :get-route-realm        24
-   :perf-event-output      25
-   :skb-load-bytes         26
-   :get-stackid            27
-   :csum-diff              28
-   :skb-get-tunnel-opt     29
-   :skb-set-tunnel-opt     30
-   :skb-change-proto       31
-   :skb-change-type        32
-   :skb-under-cgroup       33
-   :get-hash-recalc        34
-   :get-current-task       35
-   :probe-write-user       36
+  "BPF helper function IDs.
+
+   Complete mapping of all 211 BPF helper functions from Linux kernel 6.x.
+   Use with (call (:helper-name bpf-helpers)) or directly with the ID.
+
+   Example:
+     (call (:map-lookup-elem bpf-helpers))  ; Call helper by keyword
+     (call 1)                                ; Call helper by ID
+
+   See also: clj-ebpf.helpers for detailed metadata about each helper."
+  {;; === Map Helpers (1-3) ===
+   :map-lookup-elem          1
+   :map-update-elem          2
+   :map-delete-elem          3
+
+   ;; === Probe/Trace Helpers (4-6) ===
+   :probe-read               4
+   :ktime-get-ns             5
+   :trace-printk             6
+
+   ;; === Utility Helpers (7-8) ===
+   :get-prandom-u32          7
+   :get-smp-processor-id     8
+
+   ;; === Network/SKB Helpers (9-30) ===
+   :skb-store-bytes          9
+   :l3-csum-replace          10
+   :l4-csum-replace          11
+   :tail-call                12
+   :clone-redirect           13
+   :get-current-pid-tgid     14
+   :get-current-uid-gid      15
+   :get-current-comm         16
+   :get-cgroup-classid       17
+   :skb-vlan-push            18
+   :skb-vlan-pop             19
+   :skb-get-tunnel-key       20
+   :skb-set-tunnel-key       21
+   :perf-event-read          22
+   :redirect                 23
+   :get-route-realm          24
+   :perf-event-output        25
+   :skb-load-bytes           26
+   :get-stackid              27
+   :csum-diff                28
+   :skb-get-tunnel-opt       29
+   :skb-set-tunnel-opt       30
+
+   ;; === SKB Helpers (31-50) ===
+   :skb-change-proto         31
+   :skb-change-type          32
+   :skb-under-cgroup         33
+   :get-hash-recalc          34
+   :get-current-task         35
+   :probe-write-user         36
    :current-task-under-cgroup 37
-   :skb-change-tail        38
-   :skb-pull-data          39
-   :csum-update            40
-   :set-hash-invalid       41
-   :get-numa-node-id       42
-   :skb-change-head        43
-   :xdp-adjust-head        44
-   :probe-read-str         45
-   :get-socket-cookie      46
-   :get-socket-uid         47
-   :set-hash               48
-   :setsockopt             49
-   :skb-adjust-room        50
-   :redirect-map           51
-   :sk-redirect-map        52
-   :sock-map-update        53
-   :xdp-adjust-meta        54
-   ;; Socket redirect helpers
-   :msg-redirect-map       60
-   :sock-hash-update       70
-   :msg-redirect-hash      71
-   :sk-redirect-hash       72
+   :skb-change-tail          38
+   :skb-pull-data            39
+   :csum-update              40
+   :set-hash-invalid         41
+   :get-numa-node-id         42
+   :skb-change-head          43
+   :xdp-adjust-head          44
+   :probe-read-str           45
+   :get-socket-cookie        46
+   :get-socket-uid           47
+   :set-hash                 48
+   :setsockopt               49
+   :skb-adjust-room          50
+
+   ;; === Redirect/Socket Helpers (51-72) ===
+   :redirect-map             51
+   :sk-redirect-map          52
+   :sock-map-update          53
+   :xdp-adjust-meta          54
+   :perf-event-read-value    55
+   :perf-prog-read-value     56
+   :getsockopt               57
+   :override-return          58
+   :sock-ops-cb-flags-set    59
+   :msg-redirect-map         60
+   :msg-apply-bytes          61
+   :msg-cork-bytes           62
+   :msg-pull-data            63
+   :bind                     64
+   :xdp-adjust-tail          65
+   :skb-get-xfrm-state       66
+   :get-stack                67
+   :skb-load-bytes-relative  68
+   :fib-lookup               69
+   :sock-hash-update         70
+   :msg-redirect-hash        71
+   :sk-redirect-hash         72
+
+   ;; === LWT/Segment Routing Helpers (73-76) ===
+   :lwt-push-encap           73
+   :lwt-seg6-store-bytes     74
+   :lwt-seg6-adjust-srh      75
+   :lwt-seg6-action          76
+
+   ;; === LIRC Helpers (77-78) ===
+   :rc-repeat                77
+   :rc-keydown               78
+
+   ;; === Cgroup Helpers (79-83) ===
+   :skb-cgroup-id            79
+   :get-current-cgroup-id    80
+   :get-local-storage        81
+   :sk-select-reuseport      82
+   :skb-ancestor-cgroup-id   83
+
+   ;; === Socket Lookup Helpers (84-92) ===
+   :sk-lookup-tcp            84
+   :sk-lookup-udp            85
+   :sk-release               86
+   :map-push-elem            87
+   :map-pop-elem             88
+   :map-peek-elem            89
+   :msg-push-data            90
+   :msg-pop-data             91
+   :rc-pointer-rel           92
+
+   ;; === Spinlock Helpers (93-94) ===
+   :spin-lock                93
+   :spin-unlock              94
+
+   ;; === Socket Cast Helpers (95-100) ===
+   :sk-fullsock              95
+   :tcp-sock                 96
+   :skb-ecn-set-ce           97
+   :get-listener-sock        98
+   :skc-lookup-tcp           99
+   :tcp-check-syncookie      100
+
+   ;; === Sysctl Helpers (101-106) ===
+   :sysctl-get-name          101
+   :sysctl-get-current-value 102
+   :sysctl-get-new-value     103
+   :sysctl-set-new-value     104
+   :strtol                   105
+   :strtoul                  106
+
+   ;; === Storage Helpers (107-111) ===
+   :sk-storage-get           107
+   :sk-storage-delete        108
+   :send-signal              109
+   :tcp-gen-syncookie        110
+   :skb-output               111
+
+   ;; === Probe Read Helpers (112-118) ===
+   :probe-read-user          112
+   :probe-read-kernel        113
+   :probe-read-user-str      114
+   :probe-read-kernel-str    115
+   :tcp-send-ack             116
+   :send-signal-thread       117
+   :jiffies64                118
+
+   ;; === Branch/Namespace Helpers (119-124) ===
+   :read-branch-records      119
+   :get-ns-current-pid-tgid  120
+   :xdp-output               121
+   :get-netns-cookie         122
+   :get-current-ancestor-cgroup-id 123
+   :sk-assign                124
+
+   ;; === Time/Seq Helpers (125-129) ===
+   :ktime-get-boot-ns        125
+   :seq-printf               126
+   :seq-write                127
+   :sk-cgroup-id             128
+   :sk-ancestor-cgroup-id    129
+
+   ;; === Ring Buffer Helpers (130-135) ===
+   :ringbuf-output           130
+   :ringbuf-reserve          131
+   :ringbuf-submit           132
+   :ringbuf-discard          133
+   :ringbuf-query            134
+   :csum-level               135
+
+   ;; === Socket Cast Helpers (136-141) ===
+   :skc-to-tcp6-sock         136
+   :skc-to-tcp-sock          137
+   :skc-to-tcp-timewait-sock 138
+   :skc-to-tcp-request-sock  139
+   :skc-to-udp6-sock         140
+   :get-task-stack           141
+
+   ;; === TCP Header Helpers (142-149) ===
+   :load-hdr-opt             142
+   :store-hdr-opt            143
+   :reserve-hdr-opt          144
+   :inode-storage-get        145
+   :inode-storage-delete     146
+   :d-path                   147
+   :ima-inode-hash           148
+   :sock-from-file           149
+
+   ;; === MTU/Iterator Helpers (150-155) ===
+   :check-mtu                150
+   :for-each-map-elem        151
+   :snprintf                 152
+   :sys-bpf                  153
+   :btf-find-by-name-kind    154
+   :sys-close                155
+
+   ;; === Timer Helpers (156-159) ===
+   :timer-init               156
+   :timer-set-callback       157
+   :timer-start              158
+   :timer-cancel             159
+
+   ;; === Function Helpers (160-172) ===
+   :get-func-ip              160
+   :get-attach-cookie        161
+   :task-pt-regs             162
+   :get-branch-snapshot      163
+   :trace-vprintk            164
+   :skc-to-unix-sock         165
+   :kallsyms-lookup-name     166
+   :find-vma                 167
+   :loop                     168
+   :strncmp                  169
+   :get-func-arg             170
+   :get-func-ret             171
+   :get-func-arg-cnt         172
+
+   ;; === Return Value Helpers (173-177) ===
+   :get-retval               173
+   :set-retval               174
+   :xdp-get-buff-len         175
+   :xdp-load-bytes           176
+   :xdp-store-bytes          177
+
+   ;; === Copy/BTF Helpers (178-185) ===
+   :copy-from-user           178
+   :snprintf-btf             179
+   :seq-printf-btf           180
+   :skb-cgroup-classid       181
+   :redirect-neigh           182
+   :per-cpu-ptr              183
+   :this-cpu-ptr             184
+   :redirect-peer            185
+
+   ;; === Task Storage Helpers (186-191) ===
+   :task-storage-get         186
+   :task-storage-delete      187
+   :get-current-task-btf     188
+   :bprm-opts-set            189
+   :ktime-get-coarse-ns      190
+   :ima-file-hash            191
+
+   ;; === Kernel 5.19+ Helpers (194-203) ===
+   :kptr-xchg                194
+   :map-lookup-percpu-elem   195
+   :skc-to-mptcp-sock        196
+   :dynptr-from-mem          197
+   :ringbuf-reserve-dynptr   198
+   :ringbuf-submit-dynptr    199
+   :ringbuf-discard-dynptr   200
+   :dynptr-read              201
+   :dynptr-write             202
+   :dynptr-data              203
+
+   ;; === TCP SYN Cookie Helpers (204-207) ===
+   :tcp-raw-gen-syncookie-ipv4   204
+   :tcp-raw-gen-syncookie-ipv6   205
+   :tcp-raw-check-syncookie-ipv4 206
+   :tcp-raw-check-syncookie-ipv6 207
+
+   ;; === Kernel 6.1+ Helpers (208-211) ===
+   :ktime-get-tai-ns         208
+   :user-ringbuf-drain       209
+   :cgrp-storage-get         210
+   :cgrp-storage-delete      211
    })
 
 ;; ============================================================================

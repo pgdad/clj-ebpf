@@ -82,3 +82,59 @@
     (is (= 2 (:enoent const/errno)))
     (is (= 13 (:eacces const/errno)))
     (is (= 22 (:einval const/errno)))))
+
+(deftest test-helper-func-ids
+  (testing "Common BPF helper function IDs"
+    ;; Map helpers (1-3)
+    (is (= 1 (:map-lookup-elem const/helper-func)))
+    (is (= 2 (:map-update-elem const/helper-func)))
+    (is (= 3 (:map-delete-elem const/helper-func)))
+
+    ;; Time/info helpers
+    (is (= 5 (:ktime-get-ns const/helper-func)))
+    (is (= 14 (:get-current-pid-tgid const/helper-func)))
+    (is (= 16 (:get-current-comm const/helper-func)))
+
+    ;; Network helpers
+    (is (= 23 (:redirect const/helper-func)))
+    (is (= 28 (:csum-diff const/helper-func)))
+    (is (= 44 (:xdp-adjust-head const/helper-func)))
+    (is (= 51 (:redirect-map const/helper-func)))
+    (is (= 69 (:fib-lookup const/helper-func)))
+
+    ;; Socket helpers
+    (is (= 53 (:sock-map-update const/helper-func)))
+    (is (= 70 (:sock-hash-update const/helper-func)))
+    (is (= 71 (:msg-redirect-hash const/helper-func)))
+    (is (= 72 (:sk-redirect-hash const/helper-func)))
+
+    ;; Ring buffer helpers
+    (is (= 130 (:ringbuf-output const/helper-func)))
+    (is (= 131 (:ringbuf-reserve const/helper-func)))
+    (is (= 132 (:ringbuf-submit const/helper-func)))
+    (is (= 133 (:ringbuf-discard const/helper-func)))
+
+    ;; Newer helpers (kernel 5.x+)
+    (is (= 112 (:probe-read-user const/helper-func)))
+    (is (= 113 (:probe-read-kernel const/helper-func)))
+    (is (= 125 (:ktime-get-boot-ns const/helper-func)))
+
+    ;; Timer helpers
+    (is (= 156 (:timer-init const/helper-func)))
+    (is (= 157 (:timer-set-callback const/helper-func)))
+
+    ;; Kernel 6.x helpers
+    (is (= 208 (:ktime-get-tai-ns const/helper-func)))
+    (is (= 211 (:cgrp-storage-delete const/helper-func))))
+
+  (testing "Helper func map has expected count"
+    ;; 209 helpers (1-191, 194-211; IDs 192-193 are reserved) + 1 unspec = 210 entries
+    (is (= 210 (count const/helper-func))))
+
+  (testing "Helper func IDs are unique"
+    (let [ids (vals const/helper-func)]
+      (is (= (count ids) (count (set ids))))))
+
+  (testing "Helper func IDs are in valid range"
+    (let [ids (vals const/helper-func)]
+      (is (every? #(and (>= % 0) (<= % 300)) ids)))))

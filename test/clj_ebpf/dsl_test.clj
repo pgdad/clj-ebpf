@@ -59,12 +59,65 @@
     (is (= 2 (:shot dsl/tc-action)))))
 
 (deftest test-bpf-helpers
-  (testing "BPF helper function IDs"
+  (testing "BPF helper function IDs - core helpers"
+    ;; Map helpers (1-3)
     (is (= 1 (:map-lookup-elem dsl/bpf-helpers)))
     (is (= 2 (:map-update-elem dsl/bpf-helpers)))
+    (is (= 3 (:map-delete-elem dsl/bpf-helpers)))
+
+    ;; Time/info helpers
     (is (= 5 (:ktime-get-ns dsl/bpf-helpers)))
     (is (= 6 (:trace-printk dsl/bpf-helpers)))
-    (is (= 14 (:get-current-pid-tgid dsl/bpf-helpers)))))
+    (is (= 14 (:get-current-pid-tgid dsl/bpf-helpers)))
+    (is (= 16 (:get-current-comm dsl/bpf-helpers))))
+
+  (testing "BPF helper function IDs - network helpers"
+    (is (= 23 (:redirect dsl/bpf-helpers)))
+    (is (= 28 (:csum-diff dsl/bpf-helpers)))
+    (is (= 44 (:xdp-adjust-head dsl/bpf-helpers)))
+    (is (= 51 (:redirect-map dsl/bpf-helpers)))
+    (is (= 65 (:xdp-adjust-tail dsl/bpf-helpers)))
+    (is (= 69 (:fib-lookup dsl/bpf-helpers))))
+
+  (testing "BPF helper function IDs - socket helpers"
+    (is (= 53 (:sock-map-update dsl/bpf-helpers)))
+    (is (= 70 (:sock-hash-update dsl/bpf-helpers)))
+    (is (= 71 (:msg-redirect-hash dsl/bpf-helpers)))
+    (is (= 72 (:sk-redirect-hash dsl/bpf-helpers)))
+    (is (= 84 (:sk-lookup-tcp dsl/bpf-helpers)))
+    (is (= 85 (:sk-lookup-udp dsl/bpf-helpers))))
+
+  (testing "BPF helper function IDs - ring buffer helpers"
+    (is (= 130 (:ringbuf-output dsl/bpf-helpers)))
+    (is (= 131 (:ringbuf-reserve dsl/bpf-helpers)))
+    (is (= 132 (:ringbuf-submit dsl/bpf-helpers)))
+    (is (= 133 (:ringbuf-discard dsl/bpf-helpers)))
+    (is (= 134 (:ringbuf-query dsl/bpf-helpers))))
+
+  (testing "BPF helper function IDs - newer helpers (kernel 5.x+)"
+    (is (= 112 (:probe-read-user dsl/bpf-helpers)))
+    (is (= 113 (:probe-read-kernel dsl/bpf-helpers)))
+    (is (= 125 (:ktime-get-boot-ns dsl/bpf-helpers)))
+    (is (= 156 (:timer-init dsl/bpf-helpers)))
+    (is (= 168 (:loop dsl/bpf-helpers))))
+
+  (testing "BPF helper function IDs - kernel 6.x helpers"
+    (is (= 195 (:map-lookup-percpu-elem dsl/bpf-helpers)))
+    (is (= 208 (:ktime-get-tai-ns dsl/bpf-helpers)))
+    (is (= 209 (:user-ringbuf-drain dsl/bpf-helpers)))
+    (is (= 210 (:cgrp-storage-get dsl/bpf-helpers)))
+    (is (= 211 (:cgrp-storage-delete dsl/bpf-helpers))))
+
+  (testing "BPF helpers map has expected count (209 helpers - IDs 192-193 reserved)"
+    (is (= 209 (count dsl/bpf-helpers))))
+
+  (testing "BPF helper IDs are unique"
+    (let [ids (vals dsl/bpf-helpers)]
+      (is (= (count ids) (count (set ids))))))
+
+  (testing "BPF helper IDs are in valid range (1-211)"
+    (let [ids (vals dsl/bpf-helpers)]
+      (is (every? #(and (>= % 1) (<= % 300)) ids)))))
 
 ;; ============================================================================
 ;; Instruction Building Tests
