@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.8.1] - 2025-12-30
+
+### Added
+- **File Operations with openat Syscall** (`clj-ebpf.syscall`):
+  - `file-open` - Open/create files using openat syscall via Panama FFI
+  - `AT_FDCWD` constant for current working directory
+  - Open flags: `O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`,
+    `O_TRUNC`, `O_APPEND`, `O_NONBLOCK`, `O_CLOEXEC`
+  - Cross-architecture support (x86_64, arm64, s390x, ppc64le, riscv64)
+  - Error handling with errno translation
+- **openat Syscall Numbers** (`clj-ebpf.arch`):
+  - x86_64: 257
+  - arm64/riscv64: 56 (generic syscall table)
+  - s390x: 288
+  - ppc64le: 286
+- **File Operations Tutorial** (`tutorials/quick-start-file-ops.md`):
+  - Open flags and usage patterns
+  - File permissions and modes
+  - Error handling patterns
+  - Cross-architecture support
+  - Practical patterns (lock files, log append, temp files)
+- **File Operations Example** (`examples/file_operations.clj`)
+- 12 new tests for file operations with 70+ assertions (CI-safe)
+- Updated `tutorials/README.md` with file operations section
+
 ## [0.8.0] - 2025-12-30
 
 ### Changed
