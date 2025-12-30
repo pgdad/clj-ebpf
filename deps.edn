@@ -68,7 +68,8 @@
                                clj-ebpf.sockmap-test
                                clj-ebpf.xskmap-test
                                clj-ebpf.sk-lookup-test
-                               clj-ebpf.struct-ops-test]}}
+                               clj-ebpf.struct-ops-test
+                               clj-ebpf.ctx-test]}}
 
   :examples {:extra-paths ["examples"]}
 
