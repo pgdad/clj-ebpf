@@ -386,6 +386,111 @@ Combine socket redirection with the declarative macro system:
 
 ---
 
+## Part 9: Building Socket Keys with Helpers
+
+When using SOCKHASH maps, you need to build connection tuples (4-tuple keys) from the BPF context. The `clj-ebpf.maps.helpers` namespace provides helpers for this:
+
+### Building 4-Tuple Keys
+
+```clojure
+(require '[clj-ebpf.maps.helpers :as maps-helpers])
+
+;; Build a 16-byte key from bpf_sock_ops context
+;; Key layout: remote_ip4 (4) + local_ip4 (4) + remote_port (4) + local_port (4)
+(maps-helpers/build-sock-key :r6 -16 :sock-ops)
+;; Parameters:
+;;   :r6      - Register containing context pointer
+;;   -16      - Stack offset to store key (needs 16 bytes)
+;;   :sock-ops - Context type
+
+;; Supported context types:
+;;   :sock-ops - For SOCK_OPS programs (bpf_sock_ops)
+;;   :sk-msg   - For SK_MSG programs (sk_msg_md)
+;;   :sk-skb   - For SK_SKB programs (__sk_buff)
+;;   :tc       - For TC programs (__sk_buff)
+```
+
+### Complete SOCKHASH Lookup Pattern
+
+```clojure
+(require '[clj-ebpf.dsl :as dsl]
+         '[clj-ebpf.maps.helpers :as maps-helpers]
+         '[clj-ebpf.asm :as asm])
+
+;; SOCK_OPS program that looks up connection in sockhash
+(def sock-ops-lookup-bytecode
+  (asm/assemble-with-labels
+    (concat
+      ;; Save context
+      [(dsl/mov-reg :r6 :r1)]
+
+      ;; Build 4-tuple key at stack[-16]
+      (maps-helpers/build-sock-key :r6 -16 :sock-ops)
+
+      ;; Look up in sockhash
+      (maps-helpers/build-map-lookup sockhash-fd -16)
+
+      ;; Check if found
+      [(asm/jmp-imm :jeq :r0 0 :not-found)]
+
+      ;; Found - socket exists in our map
+      [(dsl/mov :r0 1)  ; Return 1 (success)
+       (dsl/exit-insn)]
+
+      ;; Not found - new connection
+      [(asm/label :not-found)
+       (dsl/mov :r0 0)
+       (dsl/exit-insn)])))
+```
+
+### SK_MSG with SOCKHASH Redirect
+
+```clojure
+;; SK_MSG that redirects messages based on connection tuple
+(def sk-msg-redirect-bytecode
+  (asm/assemble-with-labels
+    (concat
+      ;; Save context
+      [(dsl/mov-reg :r6 :r1)]
+
+      ;; Build key from sk_msg context
+      (maps-helpers/build-sock-key :r6 -16 :sk-msg)
+
+      ;; Redirect to socket matching this key
+      (socket/msg-redirect-hash :r6 sockhash-fd :r10 0)  ; r10-16 = key ptr
+
+      ;; Adjust key pointer
+      [(dsl/mov-reg :r3 :r10)
+       (dsl/add :r3 -16)]
+
+      ;; ... redirect logic ...
+      )))
+```
+
+### IPv6 Key Building
+
+For IPv6 connections, use the 40-byte key variant:
+
+```clojure
+;; Build 40-byte IPv6 key
+;; Layout: remote_ip6 (16) + local_ip6 (16) + remote_port (4) + local_port (4)
+(maps-helpers/build-sock-key-ipv6 :r6 -48 :sock-ops)
+```
+
+### Context Key Offsets Reference
+
+The helpers use pre-defined offsets for each context type:
+
+```clojure
+maps-helpers/context-key-offsets
+;; => {:sock-ops {:remote-ip4 24, :local-ip4 28, :remote-port 64, :local-port 68}
+;;     :sk-msg   {:remote-ip4 20, :local-ip4 24, :remote-port 60, :local-port 64}
+;;     :sk-skb   {:remote-ip4 124, :local-ip4 128, :remote-port 132, :local-port 136}
+;;     :tc       {:remote-ip4 124, :local-ip4 128, :remote-port 132, :local-port 136}}
+```
+
+---
+
 ## Best Practices
 
 ### 1. Always Check Return Values
@@ -459,6 +564,7 @@ You learned how to:
 - Build SK_SKB parser and verdict programs
 - Build SK_MSG verdict programs
 - Use redirect helpers for kernel-level socket splicing
+- Build connection tuple keys with `build-sock-key` helpers
 - Attach programs to socket maps
 - Build echo servers and TCP proxies
 
@@ -486,6 +592,17 @@ You learned how to:
 | `socket/msg-redirect-hash` | SK_MSG redirect to SOCKHASH |
 | `socket/sk-skb-pass/drop` | SK_SKB return patterns |
 | `socket/sk-msg-pass/drop` | SK_MSG return patterns |
+
+### Socket Key Helpers (`clj-ebpf.maps.helpers`)
+
+| Function | Description |
+|----------|-------------|
+| `maps-helpers/build-sock-key` | Build 4-tuple IPv4 key from context |
+| `maps-helpers/build-sock-key-ipv6` | Build IPv6 key from context |
+| `maps-helpers/context-key-offsets` | Pre-defined offsets for each context type |
+| `maps-helpers/build-map-lookup` | Look up entry by stack key |
+| `maps-helpers/build-map-update` | Update entry with stack key/value |
+| `maps-helpers/build-map-delete` | Delete entry by stack key |
 
 ### Map Functions
 

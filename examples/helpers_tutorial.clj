@@ -13,6 +13,9 @@
    6. Token Bucket Rate Limiting (clj-ebpf.rate-limit)
    7. Memory Operations (clj-ebpf.memory)
    8. BPF Map Helpers (clj-ebpf.maps.helpers)
+   9. Context Structure Offsets (clj-ebpf.ctx)
+   10. Network Byte Order Conversion (dsl/htons, ntohs, etc.)
+   11. Socket Key Building (maps/build-sock-key)
 
    Each section includes:
    - Overview of the helper's purpose
@@ -30,6 +33,7 @@
             [clj-ebpf.rate-limit :as rate-limit]
             [clj-ebpf.memory :as mem]
             [clj-ebpf.maps.helpers :as maps]
+            [clj-ebpf.ctx :as ctx]
             [clj-ebpf.dsl :as dsl]
             [clj-ebpf.asm :as asm]))
 
@@ -736,6 +740,325 @@
     (println "  Bytecode size:" (count bytecode) "bytes")))
 
 ;; ============================================================================
+;; Section 9: Context Structure Offsets
+;; ============================================================================
+
+(defn demo-context-offsets
+  "Demonstrate BPF context structure offsets.
+
+   Pre-defined offsets for accessing fields in BPF context structures
+   eliminate manual offset calculations and reduce errors."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "Section 9: CONTEXT STRUCTURE OFFSETS")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  (println "Purpose: Access BPF context fields without manual offset calculations")
+  (println "         Covers all major program types and protocol headers\n")
+
+  ;; Example 1: bpf_sock_ops structure
+  (println "Example 1: bpf_sock_ops Structure (SOCK_OPS programs)")
+  (println "-----------------------------------------------------")
+  (println "struct bpf_sock_ops field offsets:\n")
+  (doseq [[field offset] (take 10 (sort-by val ctx/bpf-sock-ops))]
+    (printf "  %-20s offset %3d\n" (name field) offset))
+  (println "  ... and" (- (count ctx/bpf-sock-ops) 10) "more fields\n")
+
+  (println "Usage in BPF program:")
+  (println "  ;; Load operation code from sock_ops context")
+  (println "  (dsl/ldx :w :r2 :r1 (:op ctx/bpf-sock-ops))")
+  (println "  ;; Load local port (note: HOST byte order)")
+  (println "  (dsl/ldx :w :r2 :r1 (:local-port ctx/bpf-sock-ops))")
+  (println "  ;; Load remote port (note: NETWORK byte order)")
+  (println "  (dsl/ldx :w :r2 :r1 (:remote-port ctx/bpf-sock-ops))\n")
+
+  ;; Example 2: bpf_sock structure
+  (println "Example 2: bpf_sock Structure")
+  (println "-----------------------------")
+  (println "struct bpf_sock field offsets:\n")
+  (doseq [[field offset] (sort-by val ctx/bpf-sock)]
+    (printf "  %-20s offset %3d\n" (name field) offset))
+  (println)
+
+  ;; Example 3: Re-exported structures
+  (println "Example 3: Re-exported Context Structures")
+  (println "------------------------------------------")
+  (println "clj-ebpf.ctx re-exports offsets from specialized modules:\n")
+  (println "  ctx/sk-buff    - __sk_buff for TC/Socket Filter programs")
+  (printf  "                   (%d fields: len, mark, data, data-end, etc.)\n"
+           (count ctx/sk-buff))
+  (println "  ctx/xdp-md     - xdp_md for XDP programs")
+  (printf  "                   (%d fields: data, data-end, ingress-ifindex, etc.)\n"
+           (count ctx/xdp-md))
+  (println "  ctx/sk-msg     - sk_msg_md for SK_MSG programs")
+  (printf  "                   (%d fields: data, data-end, family, etc.)\n"
+           (count ctx/sk-msg))
+  (println "  ctx/bpf-sk-lookup - bpf_sk_lookup for SK_LOOKUP programs")
+  (printf  "                   (%d fields: sk, family, protocol, etc.)\n\n"
+           (count ctx/bpf-sk-lookup))
+
+  ;; Example 4: Protocol header offsets
+  (println "Example 4: Protocol Header Offsets")
+  (println "----------------------------------")
+  (println "Pre-defined offsets for packet parsing:\n")
+
+  (println "  Ethernet Header (ctx/ethernet-offsets):")
+  (doseq [[field offset] ctx/ethernet-offsets]
+    (printf "    %-15s offset %2d\n" (name field) offset))
+  (println)
+
+  (println "  IPv4 Header (ctx/ipv4-offsets):")
+  (doseq [[field offset] (take 6 (sort-by val ctx/ipv4-offsets))]
+    (printf "    %-15s offset %2d\n" (name field) offset))
+  (println)
+
+  (println "  TCP Header (ctx/tcp-offsets):")
+  (doseq [[field offset] (take 4 (sort-by val ctx/tcp-offsets))]
+    (printf "    %-15s offset %2d\n" (name field) offset))
+  (println)
+
+  ;; Example 5: Header size constants
+  (println "Example 5: Header Size Constants")
+  (println "--------------------------------")
+  (println "  ctx/ethernet-header-size:  " ctx/ethernet-header-size "bytes")
+  (println "  ctx/ipv4-header-min-size:  " ctx/ipv4-header-min-size "bytes (no options)")
+  (println "  ctx/ipv6-header-size:      " ctx/ipv6-header-size "bytes")
+  (println "  ctx/tcp-header-min-size:   " ctx/tcp-header-min-size "bytes (no options)")
+  (println "  ctx/udp-header-size:       " ctx/udp-header-size "bytes\n")
+
+  ;; Example 6: Utility constants
+  (println "Example 6: Protocol Constants")
+  (println "-----------------------------")
+  (println "  Address Families (ctx/address-family):")
+  (doseq [[name val] (take 4 ctx/address-family)]
+    (printf "    %-10s %d\n" (clojure.core/name name) val))
+  (println)
+
+  (println "  Socket Types (ctx/socket-type):")
+  (doseq [[name val] (take 3 ctx/socket-type)]
+    (printf "    %-10s %d\n" (clojure.core/name name) val))
+  (println)
+
+  (println "  IP Protocols (ctx/ip-protocol):")
+  (doseq [[name val] ctx/ip-protocol]
+    (printf "    %-10s %d\n" (clojure.core/name name) val)))
+
+;; ============================================================================
+;; Section 10: Network Byte Order Conversion
+;; ============================================================================
+
+(defn demo-byte-order-conversion
+  "Demonstrate network byte order conversion helpers.
+
+   Network protocols use big-endian byte order, while most CPUs use
+   little-endian. These helpers convert between host and network order."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "Section 10: NETWORK BYTE ORDER CONVERSION")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  (println "Purpose: Convert between host and network byte order")
+  (println "         Required for port numbers and IP addresses\n")
+
+  ;; Example 1: BPF instruction generation
+  (println "Example 1: BPF Instructions for Byte Order Conversion")
+  (println "------------------------------------------------------")
+  (println "Generate BPF instructions for in-program byte swapping:\n")
+
+  (let [htons-insn (dsl/htons :r7)
+        htonl-insn (dsl/htonl :r5)]
+    (println "  16-bit conversion (ports):")
+    (println "    (dsl/htons :r7) - host to network short")
+    (println "    (dsl/ntohs :r7) - network to host short (same operation)")
+    (printf  "    Generates %d bytes of BPF bytecode\n\n" (count htons-insn))
+
+    (println "  32-bit conversion (IPv4 addresses):")
+    (println "    (dsl/htonl :r5) - host to network long")
+    (println "    (dsl/ntohl :r5) - network to host long (same operation)")
+    (printf  "    Generates %d bytes of BPF bytecode\n\n" (count htonl-insn)))
+
+  ;; Example 2: Compile-time value conversion
+  (println "Example 2: Compile-Time Value Conversion")
+  (println "-----------------------------------------")
+  (println "Convert values in Clojure before encoding in instructions:\n")
+
+  (println "  Port conversion (16-bit):")
+  (println "    (dsl/htons-val 80)   =>" (format "0x%04X" (dsl/htons-val 80)))
+  (println "    (dsl/htons-val 8080) =>" (format "0x%04X" (dsl/htons-val 8080)))
+  (println "    (dsl/htons-val 443)  =>" (format "0x%04X" (dsl/htons-val 443)))
+  (println)
+
+  (println "  Symmetry verification:")
+  (println "    (dsl/ntohs-val (dsl/htons-val 8080)) =" (dsl/ntohs-val (dsl/htons-val 8080)))
+  (println)
+
+  (println "  IPv4 address conversion (32-bit):")
+  (println "    127.0.0.1   (0x7F000001):")
+  (println "      (dsl/htonl-val 0x7F000001) =>" (format "0x%08X" (dsl/htonl-val 0x7F000001)))
+  (println "    192.168.1.1 (0xC0A80101):")
+  (println "      (dsl/htonl-val 0xC0A80101) =>" (format "0x%08X" (dsl/htonl-val 0xC0A80101)))
+  (println)
+
+  ;; Example 3: Practical usage
+  (println "Example 3: Practical Usage - Port Matching")
+  (println "-------------------------------------------")
+  (let [program [(dsl/ldx :w :r2 :r1 (:src-port ctx/tcp-offsets))  ; Load port
+                 (dsl/htons :r2)                                   ; Convert to host order
+                 (dsl/jmp-imm :jne :r2 80 3)                      ; Compare with port 80
+                 (dsl/mov :r0 1)                                   ; Match: XDP_DROP
+                 (dsl/exit-insn)
+                 (dsl/mov :r0 2)                                   ; No match: XDP_PASS
+                 (dsl/exit-insn)]]
+    (println "Match packets to port 80 (HTTP):")
+    (println)
+    (println "  ;; Load source port (network byte order)")
+    (println "  (dsl/ldx :w :r2 :r1 (:src-port ctx/tcp-offsets))")
+    (println "  ;; Convert to host byte order")
+    (println "  (dsl/htons :r2)")
+    (println "  ;; Compare with port 80")
+    (println "  (dsl/jmp-imm :jne :r2 80 3)")
+    (println)
+    (printf  "  Total: %d instructions\n\n" (count program)))
+
+  ;; Example 4: Byte order notes
+  (println "Example 4: Important Byte Order Notes")
+  (println "-------------------------------------")
+  (println "Different BPF contexts have DIFFERENT byte orders for ports:\n")
+  (println "  Context          remote_port    local_port")
+  (println "  -------          -----------    ----------")
+  (println "  bpf_sock_ops     NETWORK        HOST (!)")
+  (println "  bpf_sock         NETWORK        HOST (!)")
+  (println "  __sk_buff        NETWORK        HOST (!)")
+  (println "  sk_msg_md        NETWORK        HOST (!)")
+  (println "  bpf_sk_lookup    HOST           HOST")
+  (println)
+  (println "IMPORTANT: local_port is usually HOST byte order!")
+  (println "           Only convert remote_port before comparison."))
+
+;; ============================================================================
+;; Section 11: Socket Key Building Helpers
+;; ============================================================================
+
+(defn demo-socket-key-helpers
+  "Demonstrate socket key building helpers for sockmap/sockhash.
+
+   These helpers generate instruction sequences to extract connection
+   tuples (4-tuple or 5-tuple) from BPF context structures."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "Section 11: SOCKET KEY BUILDING HELPERS")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  (println "Purpose: Build socket keys for sockmap/sockhash operations")
+  (println "         Automatically extract connection tuples from context\n")
+
+  ;; Example 1: Supported context types
+  (println "Example 1: Supported Context Types")
+  (println "----------------------------------")
+  (println "maps/context-key-offsets defines offsets for each context type:\n")
+  (doseq [[ctx-type offsets] maps/context-key-offsets]
+    (printf "  %-12s remote_ip4: %3d  local_ip4: %3d  remote_port: %3d  local_port: %3d\n"
+            (name ctx-type)
+            (:remote-ip4 offsets)
+            (:local-ip4 offsets)
+            (:remote-port offsets)
+            (:local-port offsets)))
+  (println)
+
+  ;; Example 2: Building a 4-tuple key
+  (println "Example 2: Building a 4-Tuple IPv4 Key")
+  (println "--------------------------------------")
+  (let [instrs (maps/build-sock-key :r6 -16 :sock-ops)]
+    (println "Build 16-byte key (remote_ip + local_ip + ports) from sock_ops:\n")
+    (println "  (maps/build-sock-key :r6 -16 :sock-ops)")
+    (println)
+    (println "  Parameters:")
+    (println "    :r6        - Register containing context pointer")
+    (println "    -16        - Stack offset to store key (16 bytes needed)")
+    (println "    :sock-ops  - Context type (bpf_sock_ops)")
+    (println)
+    (println "  Key layout on stack:")
+    (println "    offset+0:  remote_ip4  (4 bytes)")
+    (println "    offset+4:  local_ip4   (4 bytes)")
+    (println "    offset+8:  remote_port (4 bytes)")
+    (println "    offset+12: local_port  (4 bytes)")
+    (println)
+    (printf  "  Generated %d instructions (%d bytes)\n\n"
+             (count instrs) (* 8 (count instrs))))
+
+  ;; Example 3: IPv6 key building
+  (println "Example 3: Building an IPv6 Key")
+  (println "-------------------------------")
+  (let [instrs (maps/build-sock-key-ipv6 :r6 -48 :sock-ops)]
+    (println "Build 40-byte key for IPv6 connections:\n")
+    (println "  (maps/build-sock-key-ipv6 :r6 -48 :sock-ops)")
+    (println)
+    (println "  Key layout on stack:")
+    (println "    offset+0:  remote_ip6  (16 bytes)")
+    (println "    offset+16: local_ip6   (16 bytes)")
+    (println "    offset+32: remote_port (4 bytes)")
+    (println "    offset+36: local_port  (4 bytes)")
+    (println)
+    (printf  "  Generated %d instructions (%d bytes)\n\n"
+             (count instrs) (* 8 (count instrs))))
+
+  ;; Example 4: Complete sock_ops to sockmap lookup pattern
+  (println "Example 4: Complete SOCK_OPS to SOCKMAP Pattern")
+  (println "-----------------------------------------------")
+  (let [program (concat
+                  ;; Save context
+                  [(dsl/mov-reg :r6 :r1)]
+
+                  ;; Build 4-tuple key at stack[-16]
+                  (maps/build-sock-key :r6 -16 :sock-ops)
+
+                  ;; Look up in sockmap (fd=10)
+                  (maps/build-map-lookup 10 -16)
+
+                  ;; Check if found
+                  [(asm/jmp-imm :jeq :r0 0 :not-found)]
+
+                  ;; Found - do something with socket
+                  [(dsl/mov :r0 1)  ; SK_PASS
+                   (dsl/exit-insn)]
+
+                  ;; Not found
+                  [(asm/label :not-found)
+                   (dsl/mov :r0 0)  ; SK_DROP
+                   (dsl/exit-insn)])
+        bytecode (asm/assemble-with-labels program)]
+    (println "SOCK_OPS program that looks up connection in sockmap:\n")
+    (println "  (concat")
+    (println "    ;; Save context")
+    (println "    [(dsl/mov-reg :r6 :r1)]")
+    (println "    ;; Build key")
+    (println "    (maps/build-sock-key :r6 -16 :sock-ops)")
+    (println "    ;; Lookup in sockmap")
+    (println "    (maps/build-map-lookup sockmap-fd -16)")
+    (println "    ;; Handle result...")
+    (println "    ...)")
+    (println)
+    (printf  "  Total: %d instructions (%d bytes)\n\n"
+             (/ (count bytecode) 8) (count bytecode)))
+
+  ;; Example 5: SK_MSG redirect pattern
+  (println "Example 5: SK_MSG Redirect Pattern")
+  (println "----------------------------------")
+  (let [sk-msg-key (maps/build-sock-key :r6 -16 :sk-msg)]
+    (println "Build key from sk_msg context for message redirection:\n")
+    (println "  ;; In SK_MSG program, redirect message to peer socket")
+    (println "  (concat")
+    (println "    ;; Context is already in r1")
+    (println "    [(dsl/mov-reg :r6 :r1)]")
+    (println "    ;; Build key from sk_msg context")
+    (println "    (maps/build-sock-key :r6 -16 :sk-msg)")
+    (println "    ;; Look up peer socket in sockhash")
+    (println "    ;; ... redirect logic ...")
+    (println "    )")
+    (println)
+    (printf  "  Key building: %d instructions\n" (count sk-msg-key))))
+
+;; ============================================================================
 ;; Integration Example: Complete XDP Firewall
 ;; ============================================================================
 
@@ -881,6 +1204,9 @@
   (demo-rate-limit-helpers)
   (demo-memory-helpers)
   (demo-map-helpers)
+  (demo-context-offsets)
+  (demo-byte-order-conversion)
+  (demo-socket-key-helpers)
   (demo-complete-xdp-firewall)
 
   (println "\n" (apply str (repeat 70 "=")) "\n")
