@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet
+
+## [0.9.0] - 2025-12-30
+
 ### Added
 - **BPF Helper Function ID Constants** (`clj-ebpf.dsl`, `clj-ebpf.constants`):
   - All 209 BPF helper function IDs (IDs 1-191, 194-211; 192-193 reserved)
@@ -30,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `build-sock-key-ipv6` - Build IPv6 socket key from context (40 bytes)
   - Support for :sock-ops, :sk-msg, :sk-skb, :tc context types
   - `context-key-offsets` map for custom key building
+- **Comprehensive Tutorials** (`examples/helpers_tutorial.clj`):
+  - Section 9: Context Structure Offsets with 6 examples
+  - Section 10: Network Byte Order Conversion with 4 examples
+  - Section 11: Socket Key Building Helpers with 5 examples
+- **Updated SOCKMAP Tutorial** (`tutorials/quick-start-sockmap.md`):
+  - Part 9: Building Socket Keys with Helpers
+  - Complete SOCKHASH lookup patterns
+  - Updated reference tables
 - New CI-safe test namespaces: `ctx-test`, `maps-helpers-test`
 
 ## [0.8.2] - 2025-12-30
