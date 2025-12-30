@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet
 
+## [0.8.2] - 2025-12-30
+
+### Added
+- **File Read/Write Syscall Functions** (`clj-ebpf.syscall`):
+  - `file-read` - Read up to N bytes from a file descriptor
+  - `file-write` - Write bytes to a file descriptor
+  - `file-read-all` - Convenience function to read entire file contents
+  - `file-write-all` - Convenience function to write data to file (creates/truncates)
+  - Error handling with errno translation for read/write operations
+  - Support for special files (/dev/zero, /dev/urandom, etc.)
+  - Binary data read/write support
+- **Updated File Operations Tutorial** (`tutorials/quick-start-file-ops.md`):
+  - Part 6: Reading and Writing Files
+  - Low-level read/write function usage
+  - Convenience functions documentation
+  - Binary data examples
+  - Error handling for read/write
+- **Updated File Operations Example** (`examples/file_operations.clj`):
+  - Section 4: Reading and writing files
+  - Demonstrations of file-read, file-write, file-read-all, file-write-all
+- 8 new tests for file read/write operations (CI-safe)
+
 ## [0.8.1] - 2025-12-30
 
 ### Added
