@@ -499,6 +499,55 @@ BPF STRUCT_OPS allows BPF programs to replace kernel function pointers:
 - `aimd-ssthresh` - Classic AIMD ssthresh calculation
 - `struct-ops-return-*` - Return patterns
 
+### Low-Level File Operations
+
+**[Quick Start: File Operations](quick-start-file-ops.md)** - Direct file access using the openat syscall!
+
+The `file-open` function provides low-level file operations via the openat syscall:
+
+```clojure
+(require '[clj-ebpf.syscall :as syscall])
+
+;; Open existing file for reading
+(let [fd (syscall/file-open "/etc/passwd" syscall/O_RDONLY)]
+  (println "Opened file, fd:" fd)
+  ;; Use fd with other syscalls...
+  (syscall/close-fd fd))
+
+;; Create new file with specific permissions
+(let [fd (syscall/file-open "/tmp/myfile.txt"
+                            (bit-or syscall/O_CREAT syscall/O_WRONLY)
+                            0644)]
+  ;; Write to file...
+  (syscall/close-fd fd))
+
+;; Exclusive creation (lock file pattern)
+(try
+  (let [fd (syscall/file-open "/tmp/app.lock"
+                              (bit-or syscall/O_CREAT
+                                      syscall/O_EXCL
+                                      syscall/O_WRONLY)
+                              0600)]
+    ;; Lock acquired
+    (syscall/close-fd fd))
+  (catch clojure.lang.ExceptionInfo e
+    (println "Lock already held")))
+```
+
+**Available Flags:**
+- `O_RDONLY` / `O_WRONLY` / `O_RDWR` - Access modes
+- `O_CREAT` - Create file if doesn't exist
+- `O_EXCL` - Fail if file exists (with O_CREAT)
+- `O_TRUNC` - Truncate file to zero length
+- `O_APPEND` - Append to end of file
+- `O_CLOEXEC` - Close on exec
+
+**Key Functions:**
+- `file-open` - Open/create files via openat syscall
+- `close-fd` - Close file descriptor
+
+See the [File Operations Tutorial](quick-start-file-ops.md) for detailed examples.
+
 ### Multi-Architecture Support (`clj-ebpf.arch`)
 
 Automatic detection and platform-specific constants for x86_64, ARM64, s390x, PPC64LE, and RISC-V:
